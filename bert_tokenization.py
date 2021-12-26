@@ -19,10 +19,11 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import io
 import collections
 import unicodedata
 import six
-import tensorflow as tf  # TO-DO: seems like it's only used for reading txt, maybe we can skip this dep?
+# import tensorflow as tf  # TO-DO: seems like it's only used for reading txt, maybe we can skip this dep?
 
 
 def convert_to_unicode(text):
@@ -72,7 +73,8 @@ def load_vocab(vocab_file):
   """Loads a vocabulary file into a dictionary."""
   vocab = collections.OrderedDict()
   index = 0
-  with tf.gfile.GFile(vocab_file, "r") as reader:
+  with io.open(vocab_file, mode="r") as reader:
+  # with tf.gfile.GFile(vocab_file, "r") as reader:
     while True:
       token = convert_to_unicode(reader.readline())
       if not token:
