@@ -1,3 +1,4 @@
+import io, sys, os
 from nltk.corpus import wordnet as wn
 import logging
 import numpy as np
@@ -142,7 +143,11 @@ if __name__ == '__main__':
     parser.add_argument('-emb_strategy', type=str, default='aug_gloss+r_asy+examples',
                         choices=['relations_aug_gloss+examples'],
                         help='different components to learn the basic sense embeddings', required=False)
+    parser.add_argument('-output', type=str, default="./data/vectors/emb_wn.pkl", required=False, help="output path.")
     args = parser.parse_args()
+
+    assert not os.path.exists(args.output), f"file already exists: {args.output}"
+
     norm = True
     emb_strategy = 'relations_aug_gloss+examples'
 
@@ -170,4 +175,6 @@ if __name__ == '__main__':
 
     print('key_length: %d' % len(vector_all))
 
-    pickle.dump(vector_all, open('data/vectors/emb_wn', 'wb'), -1)
+    logging.info(f"vectors will be saved as: {args.output}")
+    with io.open(args.output, mode="wb") as ofs:
+        pickle.dump(vector_all, ofs, -1)

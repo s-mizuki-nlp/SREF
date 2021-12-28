@@ -1,4 +1,4 @@
-import os
+import sys, io, os
 import logging
 import argparse
 from time import time
@@ -8,10 +8,8 @@ from collections import defaultdict
 from collections import Counter
 import xml.etree.ElementTree as ET
 
-import numpy as np
-from nltk.corpus import wordnet as wn
 
-from bert_as_service import bert_embed
+from bert_as_service import BertEncoder
 from vectorspace import SensesVSM
 from vectorspace import get_sk_pos
 
@@ -98,7 +96,7 @@ def str_scores(scores, n=3, r=5):
     """Convert scores list to a more readable string."""
     return str([(l, round(s, r)) for l, s in scores[:n]])
 
-
+@lru_cache()
 def wn_all_lexnames_groups():
     groups = defaultdict(list)
     for synset in wn.all_synsets():
@@ -167,6 +165,8 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Nearest Neighbors WSD Evaluation.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    parser.add_argument("-bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
+    parser.add_argument('-synset_vectors_path', type=str, default="./data/vectors/emb_wn.pkl", required=False, help="Path to Synset Vectors")
     parser.add_argument('-lmms_path', default='data/vectors/lmms.txt', required=False,
                         help='Path to LMMS vector')
     parser.add_argument('-wsd_fw_path', help='Path to WSD Evaluation Framework', required=False,
@@ -190,9 +190,19 @@ if __name__ == '__main__':
     Load sense embeddings for evaluation.
     Check the dimensions of the sense embeddings to guess that they are composed with static embeddings.
     """
-    logging.info('Loading SensesVSM ...')
-    
-    emb_wn = pickle.load(open('data/vectors/emb_wn.txt', 'rb'))
+    logging.info(f"connecting to bert-as-service: {args.bert_host}")
+    host_info = args.bert_host.split(":")
+    if len(host_info) == 1:
+        bert_encoder = BertEncoder(host=host_info[0])
+    elif len(host_info) == 2:
+        bert_encoder = BertEncoder(host=host_info[0], port=host_info[1])
+    else:
+        raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
+
+    logging.info(f"Loading SensesVSM from: {args.synset_vectors_path}")
+
+    with io.open(args.synset_vectors_path, mode='rb') as ifs:
+        emb_wn = pickle.load(ifs)
     if 'lmms' in args.emb_strategy:
         lmms = pickle.load(open(args.lmms_path, 'rb'))
 
@@ -217,35 +227,43 @@ if __name__ == '__main__':
         """
         Initialize various counters for calculating supplementary metrics for each test set.
         """
+        logging.info(f"dataset: {test_set}")
+
         n_instances, n_correct, n_unk_lemmas = 0, 0, 0
         correct_idxs = []
         num_options = []
         failed_by_pos = defaultdict(list)
-
-        pos_confusion = {}
-        for pos in ['NOUN', 'VERB', 'ADJ', 'ADV']:
-            pos_confusion[pos] = {'NOUN': 0, 'VERB': 0, 'ADJ': 0, 'ADV': 0}
+        pos_confusion = defaultdict(lambda : defaultdict(int))
 
         """
         Load evaluation instances and gold labels.
         Gold labels (sensekeys) only used for reporting accuracy during evaluation.
         """
-        wsd_fw_set_path = args.wsd_fw_path + 'Evaluation_Datasets/%s/%s.data.xml' % (test_set, test_set)
-        wsd_fw_gold_path = args.wsd_fw_path + 'Evaluation_Datasets/%s/%s.gold.key.txt' % (test_set, test_set)
+        wsd_fw_set_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.data.xml"
+        wsd_fw_set_cache_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.data.pkl"
+        wsd_fw_gold_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.gold.key.txt"
         id2senses = get_id2sks(wsd_fw_gold_path)
-        eval_instances = load_wsd_fw_set(wsd_fw_set_path)
+        if os.path.exists(wsd_fw_set_cache_path):
+            logging.info(f"loading evalset from cache file: {wsd_fw_set_cache_path}")
+            with io.open(wsd_fw_set_cache_path, mode="rb") as ifs:
+                eval_instances = pickle.load(ifs)
+        else:
+            logging.info(f"loading evalset from original file: {wsd_fw_set_path}")
+            eval_instances = load_wsd_fw_set(wsd_fw_set_path)
+            logging.info(f"saving evalset into cache file: {wsd_fw_set_cache_path}")
 
         """
         Iterate over evaluation instances and write predictions in WSD_Evaluation_Framework's format.
         File with predictions is processed by the official scorer after iterating over all instances.
         """
+
         results_path = 'data/results/%s.%s.%s.key' % (args.emb_strategy, test_set, args.merge_strategy)
         with open(results_path, 'w') as results_f:
             for batch_idx, batch in enumerate(chunks(eval_instances, args.batch_size)):
                 batch_sents = [sent_info['tokenized_sentence'] for sent_info in batch]
 
                 # process contextual embeddings in sentences batches of size args.batch_size
-                batch_bert = bert_embed(batch_sents, merge_strategy=args.merge_strategy)
+                batch_bert = bert_encoder.bert_embed(batch_sents, merge_strategy=args.merge_strategy)
 
                 for sent_info, sent_bert in zip(batch, batch_bert):
                     idx_map_abs = sent_info['idx_map_abs']
