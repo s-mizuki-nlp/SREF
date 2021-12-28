@@ -4,7 +4,7 @@ sentence_dict_*
 
 
 # IDE
-.idea
+.idea/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

@@ -8,7 +8,7 @@ from nltk.corpus import wordnet as wn
 from nltk import word_tokenize
 from tqdm import tqdm
 
-from bert_as_service import bert_embed_sents
+from bert_as_service import BertEncoder
 # from bert_as_service import bert_embed
 
 
@@ -40,7 +40,7 @@ def get_sense_data(emb_strategy):
     for pos in ['n', 'r', 'v', 'a']:
         try:
             name['%s_example' % pos] = pickle.load(open('./sentence_dict_%s' % pos, 'rb'))
-            name['%s_example' % pos] = {i: [k for k in j] for i, j in name['%s_example' % pos].items() if j}
+            name['%s_example' % pos] = {key: [v for v in value] for key, value in name['%s_example' % pos].items() if value}
             print('%s sentences loaded!' % pos)
         except:
             name['%s_example' % pos] = {}
@@ -66,6 +66,7 @@ def get_sense_data(emb_strategy):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Creates sense embeddings based on glosses and lemmas.')
+    parser.add_argument("-bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
     parser.add_argument('-batch_size', type=int, default=64, help='Batch size (BERT)', required=False)
     parser.add_argument('-emb_strategy', type=str, default='aug_gloss',
                         choices=['aug_gloss', 'aug_gloss+examples'],
@@ -74,6 +75,15 @@ if __name__ == '__main__':
                         default='data/vectors/emb_glosses_%s.txt')
     args = parser.parse_args()
     pooling_strategy = 'REDUCE_MEAN' # important parameter to replicate results using bert-as-service
+
+    logging.info(f"connecting to bert-as-service: {args.bert_host}")
+    host_info = args.bert_host.split(":")
+    if len(host_info) == 1:
+        bert_encoder = BertEncoder(host=host_info[0])
+    elif len(host_info) == 2:
+        bert_encoder = BertEncoder(host=host_info[0], port=host_info[1])
+    else:
+        raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
 
     logging.info('Preparing Gloss Data ...')
     glosses = get_sense_data(args.emb_strategy)
@@ -84,7 +94,7 @@ if __name__ == '__main__':
     for batch_idx, glosses_batch in enumerate(tqdm(chunks(glosses, args.batch_size))):
         dfns = [e[-1] for e in glosses_batch]
 
-        dfns_bert = bert_embed_sents(dfns, strategy=pooling_strategy)
+        dfns_bert = bert_encoder.bert_embed_sents(dfns)
 
         for (synset, sensekey, dfn), dfn_bert in zip(glosses_batch, dfns_bert):
             dfn_vec = dfn_bert[1]
