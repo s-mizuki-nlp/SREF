@@ -33,28 +33,40 @@ def fix_lemma(lemma):
     return lemma.replace('_', ' ')
 
 
-def get_sense_data(emb_strategy):
+def get_sense_data(emb_strategy: str):
     data = []
     import pickle
     name = locals()
     for pos in ['n', 'r', 'v', 'a']:
-        try:
-            name['%s_example' % pos] = pickle.load(open('./sentence_dict_%s' % pos, 'rb'))
-            name['%s_example' % pos] = {key: [v for v in value] for key, value in name['%s_example' % pos].items() if value}
-            print('%s sentences loaded!' % pos)
-        except:
-            name['%s_example' % pos] = {}
+        pos_name = f"{pos}_example"
+        if emb_strategy.startswith("aug"):
+            name[pos_name] = pickle.load(open(f'./sentence_dict_{pos}', 'rb'))
+            name[pos_name] = {key: [v for v in value] for key, value in name[pos_name].items() if value}
+            print(f'{pos} sentences loaded!: {len(name[pos_name])}')
+        else:
+            name[pos_name] = {}
     type2pos = {1: 'n', 2: 'v', 3: 'a', 4: 'r', 5: 'a'}
     for index, synset in enumerate(wn.all_synsets()):
+        # all_lemmas = list of
         all_lemmas = [fix_lemma(lemma.name()) for lemma in synset.lemmas()]
+        # gloss: definition sentence
         gloss = ' '.join(word_tokenize(synset.definition()))
         ty = int([i.key() for i in synset.lemmas()][0].split('%')[1][0])
-        if synset.name() in name['%s_example' % type2pos[ty]]:
-            examples = ' '.join(word_tokenize(' '.join(name['%s_example' % type2pos[ty]][synset.name()])))
+        pos = type2pos[ty]
+        pos_name = f"{pos}_example"
+        synset_id = synset.name()
+        if synset_id in name[pos_name]:
+            # concat examples in augmented corpora -> ./sentence_dict_{pos}.
+            # sentences are re-tokenized using word_tokenize() function.
+            examples = ' '.join( word_tokenize(' '.join(name[pos_name][synset_id]) ) )
         else:
+            # do not use examples in augmented corpora
             examples = ''
-        if 'examples' in emb_strategy:
-            examples += ' '.join(word_tokenize(' '.join(synset.examples())))
+        if emb_strategy.endswith("examples"):
+            # concat examples in WordNet gloss.
+            # sentences are re-tokenized using word_tokenize() function.
+            examples += ' '.join( word_tokenize(' '.join(synset.examples())) )
+        # for each lemma; append all lemmas, definition sentence and example sentences (may include augmented corpora)
         for lemma in synset.lemmas():
             lemma_name = fix_lemma(lemma.name())
             d_str = lemma_name + ' - ' + ' , '.join(all_lemmas) + ' - ' + gloss + examples
@@ -69,7 +81,7 @@ if __name__ == '__main__':
     parser.add_argument("-bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
     parser.add_argument('-batch_size', type=int, default=64, help='Batch size (BERT)', required=False)
     parser.add_argument('-emb_strategy', type=str, default='aug_gloss',
-                        choices=['aug_gloss', 'aug_gloss+examples'],
+                        choices=['gloss', 'gloss+examples', 'aug_gloss', 'aug_gloss+examples'],
                         help='different components to learn the basic sense embeddings', required=False)
     parser.add_argument('-out_path', help='Path to resulting vector set', required=False,
                         default='data/vectors/emb_glosses_%s.txt')
