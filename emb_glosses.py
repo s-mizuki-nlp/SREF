@@ -40,10 +40,12 @@ def get_sense_data(emb_strategy: str):
     for pos in ['n', 'r', 'v', 'a']:
         pos_name = f"{pos}_example"
         if emb_strategy.startswith("aug"):
+            # emb_strategy in {aug_gloss, aug_gloss+examples}
             name[pos_name] = pickle.load(open(f'./sentence_dict_{pos}', 'rb'))
             name[pos_name] = {key: [v for v in value] for key, value in name[pos_name].items() if value}
             print(f'{pos} sentences loaded!: {len(name[pos_name])}')
         else:
+            # emb_strategy in {gloss, gloss+examples}
             name[pos_name] = {}
     type2pos = {1: 'n', 2: 'v', 3: 'a', 4: 'r', 5: 'a'}
     for index, synset in enumerate(wn.all_synsets()):
