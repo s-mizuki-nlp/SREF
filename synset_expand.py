@@ -146,12 +146,14 @@ if __name__ == '__main__':
                         choices=["all-relations", "hyponymy"],
                         help='semantic relations that will be used to lookup related synsets. hypernyms are always used.', required=True)
     parser.add_argument('-out_path', type=str, help='output path of enhanced lemma embeddings.', required=False,
-                        default='data/vectors/emb_wn_%s.pkl')
+                        default='data/vectors/emb_wn_%s_%s.pkl')
     args = parser.parse_args()
 
     path_output = args.out_path
+    # e.g., aug_gloss+examples
+    corpus_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
     if path_output.find("%s") != -1:
-        path_output = path_output % str(args.emb_strategy)
+        path_output = path_output % (args.emb_strategy, corpus_name)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
 
     logging.info(f"enhancement strategy: {args.emb_strategy}")
