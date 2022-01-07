@@ -1,19 +1,18 @@
 import sys, io, os
 import logging
 import argparse
-from time import time
-from datetime import datetime
 from functools import lru_cache
 from collections import defaultdict
 from collections import Counter
 import xml.etree.ElementTree as ET
-
+import numpy as np
+from nltk.corpus import wordnet as wn
 
 from bert_as_service import BertEncoder
 from vectorspace import SensesVSM
 from vectorspace import get_sk_pos
 
-from synset_expand import *
+from synset_expand import retrieve_sense, gloss_extend
 import pickle
 
 logging.basicConfig(level=logging.DEBUG,
@@ -120,7 +119,7 @@ def sec_wsd(matches):
             synsets = {
                 [wn.synset(k) for k in synset_list if j in [l.key() for l in wn.synset(k).lemmas()]][0]: i for
                 i, j in enumerate(keys)}
-        strategy = 'r_sy+relations'
+        strategy = 'all-relations'
         # print([i.lexname() for i in synsets])
         all_related = Counter()
         for potential_synset in synsets.keys():
@@ -166,21 +165,21 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Nearest Neighbors WSD Evaluation.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
-    parser.add_argument('-synset_vectors_path', type=str, default="./data/vectors/emb_wn.pkl", required=False, help="Path to Synset Vectors")
-    parser.add_argument('-lmms_path', default='data/vectors/lmms.txt', required=False,
+    parser.add_argument('-lemma_embeddings_path', type=str, required=True, help="Path to enhanced lemma-key embeddings.")
+    parser.add_argument('-lmms_path', default='data/vectors/original/lmms.txt', required=False,
                         help='Path to LMMS vector')
     parser.add_argument('-wsd_fw_path', help='Path to WSD Evaluation Framework', required=False,
                         default='data/wsd_eval/WSD_Evaluation_Framework/')
-    parser.add_argument('-emb_strategy', type=str, default='aug_gloss+examples',
-                        choices=['aug_gloss+examples', 'aug_gloss+examples+lmms'],
-                        help='different components to learn the basic sense embeddings', required=False)
+    parser.add_argument('-emb_strategy', type=str, default='default', choices=['default', 'concat-lmms'], required=False,
+                        help='strategy to build sense embeddings.')
     parser.add_argument('-batch_size', type=int, default=32, help='Batch size (BERT)', required=False)
     parser.add_argument('-merge_strategy', type=str, default='mean', help='WordPiece Reconstruction Strategy', required=False)
     parser.add_argument('-ignore_lemma', dest='use_lemma', action='store_false', help='Ignore lemma features', required=False)
     parser.add_argument('-ignore_pos', dest='use_pos', action='store_false', help='Ignore POS features', required=False)
-    parser.add_argument('-sec_wsd', default=False, help='whether to implement second wsd', required=False)
-    parser.add_argument('-thresh', type=float, default=-1, help='Similarity threshold', required=False)
+    parser.add_argument('-thresh', type=float, default=-1, help='Similarity threshold. DEFAULT: -1.0 (=disable threshold)', required=False)
     parser.add_argument('-k', type=int, default=1, help='Number of Neighbors to accept', required=False)
+    parser.add_argument('--sec_wsd', action="store_true", help='enable Try-Again mechanism. DEFAULT: False')
+    parser.add_argument("--sanity_check", action="store_true", help="enable sanity check (e.g., assert candidate lemma keys)")
     parser.set_defaults(use_lemma=True)
     parser.set_defaults(use_pos=True)
     parser.set_defaults(debug=True)
@@ -199,13 +198,15 @@ if __name__ == '__main__':
     else:
         raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
 
-    logging.info(f"Loading SensesVSM from: {args.synset_vectors_path}")
+    logging.info(f"setup: emb_strategy:{args.emb_strategy}, sec_wsd:{args.sec_wsd}")
+    logging.info(f"Loading SensesVSM from: {args.lemma_embeddings_path}")
 
-    with io.open(args.synset_vectors_path, mode='rb') as ifs:
+    with io.open(args.lemma_embeddings_path, mode='rb') as ifs:
         emb_wn = pickle.load(ifs)
-    if 'lmms' in args.emb_strategy:
-        lmms = pickle.load(open(args.lmms_path, 'rb'))
-
+    if args.emb_strategy == "concat-lmms":
+        assert os.path.exists(args.lmms_path), f"lmm_path doesn't exist: {args.lmms_path}"
+        with io.open(args.lmms_path, mode="rb") as ifs:
+            lmms = pickle.load(ifs)
         for sense_key, sense_vector in emb_wn.items():
                 if sense_key in lmms:
                     lmms[sense_key] = np.array(lmms[sense_key])/np.linalg.norm(np.array(lmms[sense_key]))
@@ -213,7 +214,7 @@ if __name__ == '__main__':
                 else:
                     emb_wn[sense_key] = emb_wn[sense_key] + emb_wn[sense_key]
     logging.info('Loaded SensesVSM')
-    senses_vsm = SensesVSM(emb_wn, normalize=True)
+    senses_vsm = SensesVSM(emb_wn, normalize=True, TEST_MODE=args.sanity_check)
 
     """
     Initialize various counters for calculating supplementary metrics for ALL dataset.
@@ -275,11 +276,13 @@ if __name__ == '__main__':
                             continue
 
                         curr_lemma = sent_info['lemmas'][mw_idx]
+                        curr_postag = sent_info['pos'][mw_idx]
 
-                        if args.use_lemma and curr_lemma not in senses_vsm.known_lemmas:
+                        if args.use_lemma and (curr_lemma not in senses_vsm.known_lemmas):
+                            logging.warning(f"unknown lemma. ignore: {curr_lemma}|{curr_postag}")
+                            n_unk_lemmas += 1
                             continue  # skips hurt performance in official scorer
 
-                        curr_postag = sent_info['pos'][mw_idx]
                         curr_tokens = [sent_info['tokens'][i] for i in tok_idxs]
                         curr_vector = np.array([sent_bert[i][1] for i in tok_idxs]).mean(axis=0)
                         curr_vector = curr_vector / np.linalg.norm(curr_vector)
@@ -305,15 +308,11 @@ if __name__ == '__main__':
                         Matching is actually cosine similarity (most similar), or 1-NN.
                         """
                         matches = []
-                        if args.use_lemma and curr_lemma not in senses_vsm.known_lemmas:
-                            n_unk_lemmas += 1
 
-                        elif args.use_lemma and args.use_pos:  # the usual for WSD
+                        if args.use_lemma and args.use_pos:  # the usual for WSD
                             matches = senses_vsm.match_senses(curr_vector, curr_lemma, curr_postag, topn=None)
-
                         elif args.use_lemma:
                             matches = senses_vsm.match_senses(curr_vector, curr_lemma, None, topn=None)
-
                         elif args.use_pos:
                             matches = senses_vsm.match_senses(curr_vector, None, curr_postag, topn=None)
 
