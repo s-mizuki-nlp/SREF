@@ -98,7 +98,7 @@ def gloss_extend(o_sense, emb_strategy):
     :return: extended_list_gloss: the bag-of-synset
     """
     extended_list, combine_list = list(), [wn.synset(o_sense)]
-    if emb_strategy == "all":
+    if emb_strategy == "all-relations":
         relation_list = ['hyponyms', 'part_holonyms', 'part_meronyms', 'member_holonyms', 'antonyms',
                      'member_meronyms', 'entailments', 'attributes', 'similar_tos', 'causes', 'pertainyms',
                      'substance_holonyms', 'substance_meronyms', 'usage_domains', 'also_sees']
@@ -149,7 +149,9 @@ if __name__ == '__main__':
                         default='data/vectors/emb_wn_%s.pkl')
     args = parser.parse_args()
 
-    path_output = args.out_path % str(args.emb_strategy)
+    path_output = args.out_path
+    if path_output.find("%s") != -1:
+        path_output = path_output % str(args.emb_strategy)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
 
     logging.info(f"enhancement strategy: {args.emb_strategy}")
