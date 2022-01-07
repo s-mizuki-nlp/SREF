@@ -85,7 +85,7 @@ if __name__ == '__main__':
     parser.add_argument('-emb_strategy', type=str, default='aug_gloss',
                         choices=['gloss', 'gloss+examples', 'aug_gloss', 'aug_gloss+examples'],
                         help='different components to learn the basic sense embeddings', required=False)
-    parser.add_argument('-out_path', help='Path to resulting vector set', required=False,
+    parser.add_argument('-out_path', help='output path of basic lemma embeddings.', required=False,
                         default='data/vectors/emb_glosses_%s.txt')
     args = parser.parse_args()
     pooling_strategy = 'REDUCE_MEAN' # important parameter to replicate results using bert-as-service

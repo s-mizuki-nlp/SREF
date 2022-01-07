@@ -1,18 +1,15 @@
+from typing import List
 import io, sys, os
 from nltk.corpus import wordnet as wn
 import logging
 import numpy as np
-from collections import Counter
-import multiprocessing
 from tqdm import tqdm
 import pickle
 import argparse
-from collections import defaultdict
 
 logging.basicConfig(level=logging.DEBUG,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S')
-
 
 def normalize(vec_as_list):
     vector = np.array(vec_as_list)
@@ -101,13 +98,15 @@ def gloss_extend(o_sense, emb_strategy):
     :return: extended_list_gloss: the bag-of-synset
     """
     extended_list, combine_list = list(), [wn.synset(o_sense)]
-    if 'relations' in emb_strategy:
+    if emb_strategy == "all":
         relation_list = ['hyponyms', 'part_holonyms', 'part_meronyms', 'member_holonyms', 'antonyms',
                      'member_meronyms', 'entailments', 'attributes', 'similar_tos', 'causes', 'pertainyms',
                      'substance_holonyms', 'substance_meronyms', 'usage_domains', 'also_sees']
         extended_list += morpho_extend([wn.synset(o_sense)])
-    else:
+    elif emb_strategy == "hyponymy":
         relation_list = ['hyponyms']
+    else:
+        raise ValueError(f"undefined `emb_strategy` value: {emb_strategy}")
 
     # expand the original sense with nearby senses using all relations but hypernyms
     for index, relation in enumerate(relation_list):
@@ -115,6 +114,7 @@ def gloss_extend(o_sense, emb_strategy):
 
     # expand the original sense with in-depth hypernyms (only one branch)
     for synset in [wn.synset(o_sense)]:
+        # 親語義は原則として1個だが，2個以上の場合もある
         extended_list += synset.hypernyms()
 
     extended_list += combine_list
@@ -122,59 +122,67 @@ def gloss_extend(o_sense, emb_strategy):
     return extended_list
 
 
-def vector_merge(synset, key_list, emb_vecs, emb_strategy):
+def vector_merge(synset_id: str, lst_lemma_keys: List[str], lemma_key_embeddings, emb_strategy):
     new_dict = dict()
-    extend_synset = gloss_extend(synset, emb_strategy)
-    for key in key_list:
-        sense_vec = np.array(emb_vecs[key])
+    extend_synset = gloss_extend(synset_id, emb_strategy)
+    for lemma_key in lst_lemma_keys:
+        sense_vec = np.array(lemma_key_embeddings[lemma_key])
         for exp_synset in extend_synset:
-            distance = wn.synset(synset).shortest_path_distance(exp_synset)
+            distance = wn.synset(synset_id).shortest_path_distance(exp_synset)
+            # if distance is unknown, five will be used.
             distance = distance if distance else 5
             for lemma_exp in exp_synset.lemmas():
-                sense_vec += 1 / (1 + distance) * np.array(emb_vecs[lemma_exp.key()])
+                sense_vec += 1 / (1 + distance) * np.array(lemma_key_embeddings[lemma_exp.key()])
         sense_vec = sense_vec / np.linalg.norm(sense_vec)
-        new_dict[key] = sense_vec.tolist()
+        new_dict[lemma_key] = sense_vec.tolist()
     return new_dict
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Nearest Neighbors WSD Evaluation.',
+    parser = argparse.ArgumentParser(description='Apply sense embedding enhancement using semantic relation.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument('-emb_strategy', type=str, default='aug_gloss+r_asy+examples',
-                        choices=['relations_aug_gloss+examples'],
-                        help='different components to learn the basic sense embeddings', required=False)
-    parser.add_argument('-output', type=str, default="./data/vectors/emb_wn.pkl", required=False, help="output path.")
+    parser.add_argument("-input_path", type=str, help="input path of basic lemma embeddings.", required=True)
+    parser.add_argument('-emb_strategy', type=str, default="all-relations",
+                        choices=["all-relations", "hyponymy"],
+                        help='semantic relations that will be used to lookup related synsets. hypernyms are always used.', required=True)
+    parser.add_argument('-out_path', type=str, help='output path of enhanced lemma embeddings.', required=False,
+                        default='data/vectors/emb_wn_%s.pkl')
     args = parser.parse_args()
 
-    assert not os.path.exists(args.output), f"file already exists: {args.output}"
+    path_output = args.out_path % str(args.emb_strategy)
+    assert not os.path.exists(path_output), f"file already exists: {path_output}"
 
-    norm = True
-    emb_strategy = 'relations_aug_gloss+examples'
+    logging.info(f"enhancement strategy: {args.emb_strategy}")
+    logging.info(f"result will be saved as: {path_output}")
 
-    v2_path = './data/vectors/aug_gloss+examples.txt'
-    logging.info('Loading %s ...' % v2_path)
-    txt2_vecs = {}
+    emb_strategy = args.emb_strategy
 
-    for label, vec_str in tqdm(pickle.load(open(v2_path, 'rb')).items()):
-        vec = [float(v) for v in vec_str[0]]
-        if norm:
-            vec = normalize(vec)
-        txt2_vecs[label] = vec
+    logging.info(f"Loading basic lemma embeddings: {args.input_path}")
+    dict_lemma_key_embeddings = {}
+
+    with io.open(args.input_path, mode="rb") as ifs:
+        dict_lst_lemma_embeddings = pickle.load(ifs)
+    for lemma_key, lst_lemma_key_embeddings in tqdm(dict_lst_lemma_embeddings.items()):
+        # DUBIOUS: it just accounts first embedding of each lemma keys.
+        vec = lst_lemma_key_embeddings[0]
+        # normalize to unit length.
+        dict_lemma_key_embeddings[lemma_key] = normalize(vec)
+
+    logging.info('Combining lemma-key embeddings using semantic relations...')
 
     synset_dict = dict()
-    logging.info('Combining Vectors ...')
     for synset in wn.all_synsets():
-        key_list = [i.key() for i in synset.lemmas()]
-        synset_dict[synset.name()] = key_list
+        lst_lemma_keys = [i.key() for i in synset.lemmas()]
+        synset_dict[synset.name()] = lst_lemma_keys
 
     vector_all = dict()
-    print('synset_length: %d' % len(synset_dict))
+    for synset_id, lst_lemma_keys in tqdm(synset_dict.items()):
+        dict_new_lemma_embs = vector_merge(synset_id=synset_id, lst_lemma_keys=lst_lemma_keys,
+                                           lemma_key_embeddings=dict_lemma_key_embeddings, emb_strategy=emb_strategy)
+        vector_all.update(dict_new_lemma_embs)
 
-    for synset, key_list in tqdm(list(synset_dict.items())):
-        vector_all.update(vector_merge(synset, key_list, txt2_vecs, emb_strategy))
+    logging.info(f'num. of all synsets: {len(synset_dict)}')
+    logging.info(f'num. of enhanced lemma-key embeddings: {len(vector_all)}')
 
-    print('key_length: %d' % len(vector_all))
-
-    logging.info(f"vectors will be saved as: {args.output}")
-    with io.open(args.output, mode="wb") as ofs:
+    with io.open(path_output, mode="wb") as ofs:
         pickle.dump(vector_all, ofs, -1)

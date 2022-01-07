@@ -1,7 +1,7 @@
 # custom
 data/
 sentence_dict_*
-
+data
 
 # IDE
 .idea/*
