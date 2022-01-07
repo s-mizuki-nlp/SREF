@@ -90,6 +90,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     pooling_strategy = 'REDUCE_MEAN' # important parameter to replicate results using bert-as-service
 
+    logging.info(f"embedding strategy: {args.emb_strategy}")
     logging.info(f"connecting to bert-as-service: {args.bert_host}")
     host_info = args.bert_host.split(":")
     if len(host_info) == 1:
@@ -111,7 +112,7 @@ if __name__ == '__main__':
         dfns_bert = bert_encoder.bert_embed_sents(dfns)
 
         for (synset, sensekey, dfn), dfn_bert in zip(glosses_batch, dfns_bert):
-            dfn_vec = dfn_bert[1]
+            dfn_vec = dfn_bert[1] # dfn_bert[0] = sentence, dfn_bert[1] = sentence embedding
             glosses_vecs[sensekey].append(dfn_vec)
 
         t_span = time.time() - t0
