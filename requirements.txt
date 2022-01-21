@@ -8,3 +8,4 @@ PyExecjs
 orderedset
 scipy
 matplotlib
+anytree
