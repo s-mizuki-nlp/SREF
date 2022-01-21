@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict
 import io, sys, os
 from nltk.corpus import wordnet as wn
 import logging
@@ -16,7 +16,6 @@ def normalize(vec_as_list):
     vector = vector / np.linalg.norm(vector)
     return vector
 
-
 def retrieve_sense(word, pos=None):
     """
         retrieve sense glosses, sense inventory and sense frequency of word as a dict, list and list respectively
@@ -31,6 +30,26 @@ def retrieve_sense(word, pos=None):
             name_list.append(name)
     return name_list
 
+def load_basic_lemma_embeddings(path: str, l2_norm: bool, return_first_embeddings_only: bool) -> Dict[str, np.ndarray]:
+    dict_lemma_key_embeddings = {}
+
+    with io.open(path, mode="rb") as ifs:
+        dict_lst_lemma_embeddings = pickle.load(ifs)
+
+    for lemma_key, lst_lemma_key_embeddings in tqdm(dict_lst_lemma_embeddings.items()):
+        if return_first_embeddings_only:
+            # DUBIOUS: it just accounts for first embedding of each lemma keys.
+            vectors = np.array(lst_lemma_key_embeddings[0])
+        else:
+            vectors = np.array(lst_lemma_key_embeddings)
+
+        # normalize to unit length.
+        if l2_norm:
+            vectors = vectors / np.linalg.norm(vectors, axis=-1, keepdims=True)
+
+        dict_lemma_key_embeddings[lemma_key] = vectors
+
+    return dict_lemma_key_embeddings
 
 def get_related(names, relation='hypernyms'):
     """
@@ -162,15 +181,7 @@ if __name__ == '__main__':
     emb_strategy = args.emb_strategy
 
     logging.info(f"Loading basic lemma embeddings: {args.input_path}")
-    dict_lemma_key_embeddings = {}
-
-    with io.open(args.input_path, mode="rb") as ifs:
-        dict_lst_lemma_embeddings = pickle.load(ifs)
-    for lemma_key, lst_lemma_key_embeddings in tqdm(dict_lst_lemma_embeddings.items()):
-        # DUBIOUS: it just accounts first embedding of each lemma keys.
-        vec = lst_lemma_key_embeddings[0]
-        # normalize to unit length.
-        dict_lemma_key_embeddings[lemma_key] = normalize(vec)
+    dict_lemma_key_embeddings = load_basic_lemma_embeddings(path=args.input_path, l2_norm=True, return_first_embeddings_only=True)
 
     logging.info('Combining lemma-key embeddings using semantic relations...')
 
