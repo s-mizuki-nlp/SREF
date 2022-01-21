@@ -6,3 +6,5 @@ bert-serving-client==1.9.1
 fake_useragent
 PyExecjs
 orderedset
+scipy
+matplotlib
