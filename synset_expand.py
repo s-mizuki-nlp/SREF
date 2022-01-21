@@ -30,7 +30,7 @@ def retrieve_sense(word, pos=None):
             name_list.append(name)
     return name_list
 
-def load_basic_lemma_embeddings(path: str, l2_norm: bool, return_first_embeddings_only: bool) -> Dict[str, np.ndarray]:
+def load_basic_lemma_embeddings(path: str, l2_norm: bool, return_first_embeddings_only: bool, force_ndim_to_2: bool = False) -> Dict[str, np.ndarray]:
     dict_lemma_key_embeddings = {}
 
     with io.open(path, mode="rb") as ifs:
@@ -46,6 +46,12 @@ def load_basic_lemma_embeddings(path: str, l2_norm: bool, return_first_embedding
         # normalize to unit length.
         if l2_norm:
             vectors = vectors / np.linalg.norm(vectors, axis=-1, keepdims=True)
+
+        # adjust dimension
+        if force_ndim_to_2:
+            if vectors.ndim == 1:
+                # vectors: (1, n_dim)
+                vectors = vectors.reshape(1,-1)
 
         dict_lemma_key_embeddings[lemma_key] = vectors
 
@@ -141,7 +147,8 @@ def gloss_extend(o_sense, emb_strategy):
     return extended_list
 
 
-def vector_merge(synset_id: str, lst_lemma_keys: List[str], lemma_key_embeddings, emb_strategy):
+def vector_merge(synset_id: str, lst_lemma_keys: List[str],
+                 lemma_key_embeddings, emb_strategy) -> Dict[str, List[float]]:
     new_dict = dict()
     extend_synset = gloss_extend(synset_id, emb_strategy)
     for lemma_key in lst_lemma_keys:
@@ -155,7 +162,6 @@ def vector_merge(synset_id: str, lst_lemma_keys: List[str], lemma_key_embeddings
         sense_vec = sense_vec / np.linalg.norm(sense_vec)
         new_dict[lemma_key] = sense_vec.tolist()
     return new_dict
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Apply sense embedding enhancement using semantic relation.',
