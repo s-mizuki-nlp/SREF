@@ -3,7 +3,7 @@
 
 import os, sys, io
 import warnings
-from typing import Optional, Union, List, Any, Tuple
+from typing import Optional, Union, List, Any, Tuple, Dict
 import pickle
 import numpy as np
 import scipy as sp
@@ -241,6 +241,22 @@ class MultiVariateNormal(object):
             obj = pickle.load(ifs)
         obj.__class__ = cls
         return obj
+
+    def serialize(self) -> Dict[str, Any]:
+        dict_ret = {
+            "vec_mu": self._mu
+        }
+        if self.is_cov_iso:
+            dict_ret["scalar_cov"] = self.covariance[0,0]
+        elif self.is_cov_diag:
+            dict_ret["vec_cov"] = np.diag(self.covariance)
+        else:
+            dict_ret["mat_cov"] = self.covariance
+        return dict_ret
+
+    @classmethod
+    def deserialize(cls, object: Dict[str, Any]):
+        return cls.__init__(**object)
 
     def density_plot(self, fig_and_ax=None, vis_range: Optional[Tuple[float]] = None,
                      figsize: Optional[Tuple[float]] = None,
