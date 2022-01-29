@@ -12,22 +12,22 @@ import tqdm
 from pprint import pprint
 
 from synset_expand import load_basic_lemma_embeddings, vector_merge
-from .utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
-from .distribution.continuous import MultiVariateNormal
-from .distribution.prior import NormalInverseWishart
+from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
+from distribution.continuous import MultiVariateNormal
+from distribution.prior import NormalInverseWishart
 
 
 wd = os.path.dirname(__file__)
 wd = "." if wd == "" else wd
 os.chdir(wd)
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S')
 
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
-                                                   basic_lemma_embeddings: Dict[str, np.array], variance: float = 1.0) -> Dict[str, MultiVariateNormal]:
+                                                   basic_lemma_embeddings: Dict[str, np.array], variance: float = 1.0) -> Dict[str, Dict[str, np.ndarray]]:
     """
     It returns predictive posterior (?) Multivariate Normal distribution for each lemma keys which belong to specified synset.
     mean is equivalent to SREF embedding (=synset relation expansion), variance is 1.0 by default.
@@ -36,7 +36,8 @@ def compute_sense_representations_adverb_adjective(synset: wn.synset,
     :param basic_lemma_embeddings:
     :param variance:
     """
-    assert synset.pos() in ("a","r"), f"invalid synset: {synset.name()}"
+    assert synset.pos() in ("a","r","s"), f"invalid synset: {synset.name()}"
+    synset_id = synset.name()
 
     lst_lemma_keys = synset_to_lemma_keys(synset)
     lemma_vectors = vector_merge(synset_id=synset_id, lst_lemma_keys=lst_lemma_keys,
@@ -44,9 +45,11 @@ def compute_sense_representations_adverb_adjective(synset: wn.synset,
                                  emb_strategy="all-relations")
     dict_ret = {}
     for lemma_key, vector in lemma_vectors.items():
-        vec_cov = np.full(shape=(len(vector),), fill_value=variance)
-        p_dist = MultiVariateNormal(vec_mu=np.array(vector), vec_cov=vec_cov)
-        dict_ret[lemma_key] = p_dist
+        # vec_cov = np.full(shape=(len(vector),), fill_value=variance)
+        # p_dist = MultiVariateNormal(vec_mu=np.array(vector), vec_cov=vec_cov)
+        p_dist = MultiVariateNormal(vec_mu=np.array(vector), scalar_cov=variance)
+        dict_ret[lemma_key] = p_dist.serialize()
+        del p_dist
 
     return dict_ret
 
@@ -106,7 +109,7 @@ def _parse_args():
                         default='data/representations/sense_repr_norm-%s_strategy-%s_%s.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
-    parser.add_argument('--cov', type=float, required=False, default=None, help="\Phi = \cov * (\nu_{-DoF})")
+    parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
     args = parser.parse_args()
 
     # assertion
@@ -158,7 +161,7 @@ if __name__ == "__main__":
     # \nu = \nu_{-DoF} + n_dim + 1
     pi_nu = args.nu_minus_dof + n_dim + 1
     # \Phi = \V * \nu_{-DoF}
-    if args.cov is not None:
+    if args.cov > 0:
         # \V = diag(args.cov)
         vec_cov_diag = np.ones(shape=(n_dim,), dtype=np.float) * args.cov
     else:
@@ -184,7 +187,8 @@ if __name__ == "__main__":
     for synset in wn.all_synsets():
         pos = synset.pos()
         synset_id = synset.name()
-        if pos in ["a","r"]:
+        print(synset_id)
+        if pos in ["a","r","s"]:
             dict_lemma_embs = compute_sense_representations_adverb_adjective(synset=synset,
                                            basic_lemma_embeddings=dict_lemma_key_embeddings_for_sref,
                                            variance=1.0)
