@@ -9,3 +9,4 @@ orderedset
 scipy
 matplotlib
 anytree
+scikit-learn
