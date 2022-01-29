@@ -12,7 +12,7 @@ from bert_as_service import BertEncoder
 # from bert_as_service import bert_embed
 
 
-logging.basicConfig(level=logging.DEBUG,
+logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S')
 
