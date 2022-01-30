@@ -69,3 +69,16 @@ def expected_likelihood_mvn(p_x: "MultiVariateNormal", p_y: "MultiVariateNormal"
         elk = multivariate_normal.pdf(vec_x, vec_mu_xy, vm_cov_xy)
 
     return elk
+
+def cosine_similarity(p_x: "MultiVariateNormal", p_y: "MultiVariateNormal"):
+    vec_mu_x, vm_cov_x = _extract_params(p_x)
+    cosine = p_y.cosine_similarity(vec_x=vec_mu_x)
+
+    return cosine
+
+def l2_distance(p_x: "MultiVariateNormal", p_y: "MultiVariateNormal"):
+    vec_mu_x, vm_cov_x = _extract_params(p_x)
+    vec_mu_y, vm_cov_y = _extract_params(p_y)
+    dist = np.linalg.norm(vec_mu_x - vec_mu_y)
+
+    return dist
