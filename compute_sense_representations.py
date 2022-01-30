@@ -2,7 +2,7 @@
 # -*- coding:utf-8 -*-
 
 from typing import Dict
-import os, sys, io
+import os, sys, io, copy
 import argparse
 import anytree
 from nltk.corpus import wordnet as wn
@@ -24,6 +24,20 @@ os.chdir(wd)
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s - %(levelname)s - %(message)s',
                     datefmt='%d-%b-%y %H:%M:%S')
+
+
+def update_children_priors(parent_node, basic_lemma_embeddings: Dict[str, np.ndarray]):
+    prior = parent_node.prior
+    lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in parent_node.lemma_keys if lemma_key in basic_lemma_embeddings]
+    if len(lst_embs) > 0:
+        mat_s = np.stack(lst_embs).squeeze()
+        posterior = prior.posterior(mat_obs=mat_s)
+    else:
+        posterior = copy.deepcopy(prior)
+
+    for child_node in parent_node.children:
+        child_node.prior = posterior
+        update_children_priors(child_node, basic_lemma_embeddings)
 
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
@@ -153,6 +167,11 @@ if __name__ == "__main__":
     n_dim = len(next(iter(dict_lemma_key_embeddings.values())))
     logging.info(f"done. embeddings dimension size: {n_dim}")
 
+    # synset taxonomy for noun and verb
+    logging.info(f"extracting synset taxonomy from WordNet...")
+    dict_synset_taxonomy = extract_synset_taxonomy(target_part_of_speech=["n","v"], include_instance_of_lemmas=True)
+    logging.info(f"done. number of synsets: {len(dict_synset_taxonomy)}")
+
     # precompute prior distribution params = NIW(\mu, \kappa, \Phi, \nu)
     # \mu = 0
     pi_vec_mu = np.zeros(shape=(n_dim,), dtype=np.float)
@@ -172,33 +191,37 @@ if __name__ == "__main__":
         logging.info(f"empirical variance(geo. mean): {scalar_cov:1.5f}")
     vec_phi_diag = vec_cov_diag * args.nu_minus_dof
     scalar_phi_diag = np.exp(np.mean(np.log(vec_phi_diag + 1E-15)))
-    logging.info(f"kappa = {pi_kappa:1.3f}, nu = {pi_nu:1.2f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
+    logging.info(f"kappa = {pi_kappa:1.3f}, delta_nu = {args.nu_minus_dof:1.2f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
 
-    # synset taxonomy for noun and verb
-    logging.info(f"extracting synset taxonomy from WordNet...")
-    dict_synset_taxonomy = extract_synset_taxonomy(target_part_of_speech=["n","v"], include_instance_of_lemmas=True)
-    logging.info(f"done. number of synsets: {len(dict_synset_taxonomy)}")
-
-    # compute prior distributions
-    dict_synset_priors = dict()
+    # compute synset prior distributions
+    # [warning] it assigns .prior attribute for each node.
+    ROOT_SYNSETS = {
+        "n": "entity.n.01",
+        "v": "verb_dummy_root.v.01"
+    }
+    root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu)
+    for pos, root_synset_id in ROOT_SYNSETS.items():
+        logging.info(f"precompute synset priors. root: {root_synset_id}")
+        root_node = dict_synset_taxonomy[root_synset_id]
+        root_node.prior = root_prior
+        update_children_priors(parent_node=root_node, basic_lemma_embeddings=dict_lemma_key_embeddings)
 
     # compute predictive posterior distributions
     dict_sense_representations = dict()
     for synset in wn.all_synsets():
         pos = synset.pos()
         synset_id = synset.name()
-        print(synset_id)
         if pos in ["a","r","s"]:
             dict_lemma_embs = compute_sense_representations_adverb_adjective(synset=synset,
                                            basic_lemma_embeddings=dict_lemma_key_embeddings_for_sref,
                                            variance=1.0)
         elif pos in ["n","v"]:
-            synset_id_parent = dict_synset_taxonomy[synset_id].parent
-            p_post_parent = dict_synset_priors[synset_id_parent]
+            p_synset_prior = dict_synset_taxonomy[synset_id].prior
             dict_lemma_embs = compute_sense_representations_noun_verb(synset=synset,
-                                                                      prior_distribution=p_post_parent,
+                                                                      prior_distribution=p_synset_prior,
                                                                       basic_lemma_embeddings=dict_lemma_key_embeddings,
                                                                       inference_strategy=args.inference_strategy
                                                                       )
-
+            pprint(dict_lemma_embs)
+            break
         dict_sense_representations.update(dict_lemma_embs)
