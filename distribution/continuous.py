@@ -249,9 +249,9 @@ class MultiVariateNormal(object):
         if self.is_cov_iso:
             dict_ret["scalar_cov"] = self.covariance[0,0]
         elif self.is_cov_diag:
-            dict_ret["vec_cov"] = np.diag(self.covariance)
+            dict_ret["vec_cov"] = np.diag(self.covariance).copy()
         else:
-            dict_ret["mat_cov"] = self.covariance
+            dict_ret["mat_cov"] = self.covariance.copy()
         return dict_ret
 
     @classmethod
