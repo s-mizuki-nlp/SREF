@@ -3,14 +3,17 @@
 import numpy as np
 from scipy.stats import multivariate_normal
 from distribution.continuous import MultiVariateNormal
+from .distance import _wasserstein_distance_sq_between_multivariate_normal
 
-
-def _extract_params(p: "MultiVariateNormal"):
+def _extract_params(p: "MultiVariateNormal", full_covariance: bool = False):
     vec_mu = p.mean
-    if p.is_cov_diag:
-        cov = np.diag(p.covariance)
-    else:
+    if full_covariance:
         cov = p.covariance
+    else:
+        if p.is_cov_diag:
+            cov = np.diag(p.covariance)
+        else:
+            cov = p.covariance
     return vec_mu, cov
 
 # kullback-leibler divergence
@@ -81,4 +84,11 @@ def l2_distance(p_x: "MultiVariateNormal", p_y: "MultiVariateNormal"):
     vec_mu_y, vm_cov_y = _extract_params(p_y)
     dist = np.linalg.norm(vec_mu_x - vec_mu_y)
 
+    return dist
+
+def wasserstein_distance_sq(p_x: "MultiVariateNormal", p_y: "MultiVariateNormal"):
+    vec_mu_x, vm_cov_x = _extract_params(p_x, full_covariance=True)
+    vec_mu_y, vm_cov_y = _extract_params(p_y, full_covariance=True)
+    dist = _wasserstein_distance_sq_between_multivariate_normal(vec_mu_x=vec_mu_x, mat_cov_x=vm_cov_x,
+                                                                vec_mu_y=vec_mu_y, mat_cov_y=vm_cov_y)
     return dist
