@@ -3,7 +3,7 @@
 python ./compute_sense_representations.py \
 --input_path=./data/vectors/emb_glosses_aug_gloss+examples.txt \
 --normalize_lemma_embeddings \
---inference_strategy="synset_then_lemma" \
+--inference_strategy="synset-then-lemma" \
 --semantic_relation="synonym" \
 --kappa=1.0 \
 --nu_minus_dof=1.0 \

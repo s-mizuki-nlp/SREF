@@ -103,7 +103,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
     dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys if lemma_key in basic_lemma_embeddings}
 
-    if inference_strategy in ("synset_then_lemma", "synset"):
+    if inference_strategy in ("synset-then-lemma", "synset"):
         # mat_x: all lemma embeddings which relates to the target synset.
         mat_s = np.stack(list(dict_lemma_vectors.values())).squeeze()
 
@@ -111,7 +111,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
         p_posterior_s = prior_distribution.posterior(mat_obs=mat_s)
 
         for lemma_key in lst_lemma_keys_in_target_synset:
-            if inference_strategy == "synset_then_lemma":
+            if inference_strategy == "synset-then-lemma":
                 # compute lemma-level posterior if possible.
                 if lemma_key in dict_lemma_vectors:
                     # mat_l: (n_obs, n_dim)
@@ -143,12 +143,12 @@ def _parse_args():
     parser.add_argument("--input_path", type=str, help="input path of basic lemma embeddings.", required=True)
     parser.add_argument("--normalize_lemma_embeddings", action="store_true", help="normalize basic lemma embeddings before inference.")
     parser.add_argument('--inference_strategy', type=str, required=True,
-                        choices=["synset_then_lemma", "synset", "lemma",], help='methodologies that will be applied to sense embeddings.')
+                        choices=["synset-then-lemma", "synset", "lemma",], help='methodologies that will be applied to sense embeddings.')
     parser.add_argument('--semantic_relation', type=str, required=True,
                         choices=["synonym", "all-relations"], help="semantic relation which are used to update synset-level probability distribution.")
     # parser.add_argument("--sense_level", type=str, required=True, choices=["synset","lemma_key"], help="entity level of sense representation")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/sense_repr_norm-%s_strategy-%s_semrel-%s_%s.pkl')
+                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
@@ -162,9 +162,14 @@ def _parse_args():
 
     # output
     path_output = args.out_path
-    if path_output.find("%s") != -1:
+    if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
-        path_output = path_output % (args.normalize_lemma_embeddings, args.inference_strategy, args.semantic_relation, lemma_embeddings_name)
+        path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
+                                         strategy=args.inference_strategy,
+                                         relation=args.semantic_relation,
+                                         kappa=args.kappa,
+                                         nu_minus_dof=args.nu_minus_dof,
+                                         lemma_embeddings_name=lemma_embeddings_name)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
     logging.info(f"result will be saved as: {path_output}")
     args.out_path = path_output
