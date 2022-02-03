@@ -1,17 +1,15 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-from typing import Dict
-import os, sys, io, copy
+from typing import Dict, List
+import os, sys, io, copy, pickle
 import argparse
-import anytree
 from nltk.corpus import wordnet as wn
 import numpy as np
 import logging
-import tqdm
 from pprint import pprint
 
-from synset_expand import load_basic_lemma_embeddings, vector_merge
+from synset_expand import load_basic_lemma_embeddings, vector_merge, gloss_extend
 from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
 from distribution.continuous import MultiVariateNormal
 from distribution.prior import NormalInverseWishart
@@ -26,9 +24,27 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%d-%b-%y %H:%M:%S')
 
 
-def update_children_priors(parent_node, basic_lemma_embeddings: Dict[str, np.ndarray]):
+def extract_lemma_keys_from_all_semantically_related_synsets(synset_id: str) -> List[str]:
+    set_lemma_keys = set()
+    lst_related_synsets = gloss_extend(o_sense=synset_id, emb_strategy="all-relations")
+    for synset in lst_related_synsets:
+        for lemma in synset.lemmmas():
+            set_lemma_keys.add(lemma.key())
+
+    return list(set_lemma_keys)
+
+def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray]):
     prior = parent_node.prior
-    lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in parent_node.lemma_keys if lemma_key in basic_lemma_embeddings]
+
+    if semantic_relation == "synonym":
+        lst_related_lemma_keys = parent_node.lemma_keys
+    elif semantic_relation == "all-relations":
+        lst_related_lemma_keys = extract_lemma_keys_from_all_semantically_related_synsets(synset_id=parent_node.id)
+    else:
+        raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
+
+    lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys if lemma_key in basic_lemma_embeddings]
+
     if len(lst_embs) > 0:
         mat_s = np.stack(lst_embs).squeeze()
         posterior = prior.posterior(mat_obs=mat_s)
@@ -37,11 +53,12 @@ def update_children_priors(parent_node, basic_lemma_embeddings: Dict[str, np.nda
 
     for child_node in parent_node.children:
         child_node.prior = posterior
-        update_children_priors(child_node, basic_lemma_embeddings)
+        update_children_priors(parent_node=child_node, semantic_relation=semantic_relation, basic_lemma_embeddings=basic_lemma_embeddings)
 
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
-                                                   basic_lemma_embeddings: Dict[str, np.array], variance: float = 1.0) -> Dict[str, Dict[str, np.ndarray]]:
+                                                   basic_lemma_embeddings: Dict[str, np.array],
+                                                   variance: float = 1.0) -> Dict[str, Dict[str, np.ndarray]]:
     """
     It returns predictive posterior (?) Multivariate Normal distribution for each lemma keys which belong to specified synset.
     mean is equivalent to SREF embedding (=synset relation expansion), variance is 1.0 by default.
@@ -70,21 +87,30 @@ def compute_sense_representations_adverb_adjective(synset: wn.synset,
 
 def compute_sense_representations_noun_verb(synset: wn.synset,
                                             prior_distribution: "NormalInverseWishart",
+                                            semantic_relation: str,
                                             basic_lemma_embeddings: Dict[str, np.ndarray],
                                             inference_strategy: str) -> Dict[str, Dict[str, np.ndarray]]:
     dict_ret = {}
 
-    lst_lemma_keys = synset_to_lemma_keys(synset)
-    dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_lemma_keys if lemma_key in basic_lemma_embeddings}
+    lst_lemma_keys_in_target_synset = synset_to_lemma_keys(synset)
+
+    # collect basic lemma embeddings that are used for updating synset-level prob. dist. (=prior of lemma-level prob. dist.).
+    if semantic_relation == "synonym":
+        lst_related_lemma_keys = lst_lemma_keys_in_target_synset
+    elif semantic_relation == "all-relations":
+        lst_related_lemma_keys = extract_lemma_keys_from_all_semantically_related_synsets(synset_id=synset.name())
+    else:
+        raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
+    dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys if lemma_key in basic_lemma_embeddings}
 
     if inference_strategy in ("synset_then_lemma", "synset"):
-        # mat_x: all lemma embeddings belong to target synset.
+        # mat_x: all lemma embeddings which relates to the target synset.
         mat_s = np.stack(list(dict_lemma_vectors.values())).squeeze()
 
         # synset-level posterior
         p_posterior_s = prior_distribution.posterior(mat_obs=mat_s)
 
-        for lemma_key in lst_lemma_keys:
+        for lemma_key in lst_lemma_keys_in_target_synset:
             if inference_strategy == "synset_then_lemma":
                 # compute lemma-level posterior if possible.
                 if lemma_key in dict_lemma_vectors:
@@ -99,7 +125,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
 
     elif inference_strategy == "lemma":
         # lemma-level posterior
-        for lemma_key in lst_lemma_keys:
+        for lemma_key in lst_lemma_keys_in_target_synset:
             if lemma_key in dict_lemma_vectors:
                 mat_l = dict_lemma_vectors[lemma_key]
                 p_posterior_l = prior_distribution.posterior(mat_obs=mat_l)
@@ -118,9 +144,11 @@ def _parse_args():
     parser.add_argument("--normalize_lemma_embeddings", action="store_true", help="normalize basic lemma embeddings before inference.")
     parser.add_argument('--inference_strategy', type=str, required=True,
                         choices=["synset_then_lemma", "synset", "lemma",], help='methodologies that will be applied to sense embeddings.')
+    parser.add_argument('--semantic_relation', type=str, required=True,
+                        choices=["synonym", "all-relations"], help="semantic relation which are used to update synset-level probability distribution.")
     # parser.add_argument("--sense_level", type=str, required=True, choices=["synset","lemma_key"], help="entity level of sense representation")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/sense_repr_norm-%s_strategy-%s_%s.pkl')
+                        default='data/representations/sense_repr_norm-%s_strategy-%s_semrel-%s_%s.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
@@ -132,17 +160,11 @@ def _parse_args():
 
     assert args.nu_minus_dof > 0, f"`nu_minus_dof` must be positive: {args.nu_minus_dof}"
 
-    # overwrite
-    # if args.sense_level == "synset":
-    #     logging.warning("inference_strategy=synset_then_lemma is set.")
-    #     args.inference_strategy = "synset_then_lemma"
-
     # output
     path_output = args.out_path
     if path_output.find("%s") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
-        # path_output = path_output % (args.normalize_lemma_embeddings, args.inference_strategy, args.sense_level, lemma_embeddings_name)
-        path_output = path_output % (args.normalize_lemma_embeddings, args.inference_strategy, lemma_embeddings_name)
+        path_output = path_output % (args.normalize_lemma_embeddings, args.inference_strategy, args.semantic_relation, lemma_embeddings_name)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
     logging.info(f"result will be saved as: {path_output}")
     args.out_path = path_output
@@ -154,7 +176,7 @@ if __name__ == "__main__":
 
     args = _parse_args()
 
-    pprint(args, compact=True)
+    pprint(vars(args), compact=True)
 
     # load basic lemma embeddings
     # dict_lemma_key_embeddings: used for our original sense representation
@@ -204,9 +226,12 @@ if __name__ == "__main__":
         logging.info(f"precompute synset priors. root: {root_synset_id}")
         root_node = dict_synset_taxonomy[root_synset_id]
         root_node.prior = root_prior
-        update_children_priors(parent_node=root_node, basic_lemma_embeddings=dict_lemma_key_embeddings)
+        update_children_priors(parent_node=root_node,
+                               semantic_relation=args.semantic_relation,
+                               basic_lemma_embeddings=dict_lemma_key_embeddings)
 
     # compute predictive posterior distributions
+    logging.info(f"compute sense representation for all lemmas...")
     dict_sense_representations = dict()
     for synset in wn.all_synsets():
         pos = synset.pos()
@@ -218,10 +243,19 @@ if __name__ == "__main__":
         elif pos in ["n","v"]:
             p_synset_prior = dict_synset_taxonomy[synset_id].prior
             dict_lemma_embs = compute_sense_representations_noun_verb(synset=synset,
+                                                                      semantic_relation=args.semantic_relation,
                                                                       prior_distribution=p_synset_prior,
                                                                       basic_lemma_embeddings=dict_lemma_key_embeddings,
                                                                       inference_strategy=args.inference_strategy
                                                                       )
-            pprint(dict_lemma_embs)
-            break
         dict_sense_representations.update(dict_lemma_embs)
+    logging.info(f"done. number of sense representations(#lemmas): {len(dict_lemma_embs)}")
+
+
+    # save as binary file (serialize)
+    path = args.out_path
+    logging.info(f"sense repr. will be saved as: {path}")
+    with io.open(path, mode="wb") as ofs:
+        pickle.dump(dict_lemma_embs, ofs)
+
+    logging.info(f"finished. good-bye.")
