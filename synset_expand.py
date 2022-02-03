@@ -114,7 +114,7 @@ def morpho_extend(extended_list):
     return morpho_list
 
 
-def gloss_extend(o_sense, emb_strategy):
+def gloss_extend(o_sense, emb_strategy) -> List[wn.synset]:
     """
     note: this is the main algorithm for relation exploitation,
     use different relations to retrieve bag-of-synset
