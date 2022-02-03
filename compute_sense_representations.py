@@ -254,7 +254,7 @@ if __name__ == "__main__":
                                                                       inference_strategy=args.inference_strategy
                                                                       )
         dict_sense_representations.update(dict_lemma_embs)
-    logging.info(f"done. number of sense representations(#lemmas): {len(dict_lemma_embs)}")
+    logging.info(f"done. number of sense representations(#lemmas): {len(dict_sense_representations)}")
 
 
     # save as binary file (serialize)
