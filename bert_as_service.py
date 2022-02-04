@@ -17,7 +17,7 @@ class BertEncoder():
         port = 5555 if port is None else port
         self.bert_client = BertClient(ip=host, port=port)
 
-    def bert_embed(self, sents, merge_subtokens=True, merge_strategy='first'):
+    def bert_embed(self, sents, merge_strategy: str, merge_subtokens=True, apply_sum_pooling: bool = False):
         sents_encodings_full = self.bert_client.encode(sents)
         sents_tokenized = [tokenizer.tokenize(s) for s in sents]
 
@@ -27,8 +27,10 @@ class BertEncoder():
             sent_vecs = sent_vecs[1:-1]  # ignoring [CLS] and [SEP]
             for token, vec in zip(sent_tokens, sent_vecs):
                 layers_vecs = np.split(vec, 4)  # due to -pooling_layer -4 -3 -2 -1
-                layers_sum = np.array(layers_vecs, dtype=np.float32).sum(axis=0)
-                sent_encodings.append((token, layers_sum))
+                layers_repr = np.array(layers_vecs, dtype=np.float32)
+                if apply_sum_pooling:
+                    layers_repr = layers_repr.sum(axis=0)
+                sent_encodings.append((token, layers_repr))
             sents_encodings.append(sent_encodings)
 
         if merge_subtokens:
@@ -44,13 +46,15 @@ class BertEncoder():
                             # print('ERROR: seq too long ?')
                             break
 
-                        encoded_token, encoded_vec = sent_encodings.pop(0)
+                        encoded_token, encoded_vec_or_mat = sent_encodings.pop(0)
                         assert subtoken == encoded_token
-                        token_vecs.append(encoded_vec)
+                        token_vecs.append(encoded_vec_or_mat)
 
-                    token_vec = np.zeros(1024)
                     if len(token_vecs) == 0:
-                        pass
+                        if apply_sum_pooling:
+                            token_vec = np.zeros(1024)
+                        else:
+                            token_vec = np.zeros((4, 1024))
                     elif merge_strategy == 'first':
                         token_vec = np.array(token_vecs[0])
                     elif merge_strategy == 'sum':
