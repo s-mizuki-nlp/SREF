@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import os, sys, io, copy, pickle
 import argparse
 from nltk.corpus import wordnet as wn
@@ -24,30 +24,41 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%d-%b-%y %H:%M:%S')
 
 
-def extract_lemma_keys_from_all_semantically_related_synsets(synset_id: str) -> List[str]:
-    set_lemma_keys = set()
+def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: str) -> Tuple[List[str], List[int]]:
+    lst_lemma_keys = []; lst_weights = []
     lst_related_synsets = gloss_extend(o_sense=synset_id, emb_strategy="all-relations")
-    for synset in lst_related_synsets:
-        for lemma in synset.lemmmas():
-            set_lemma_keys.add(lemma.key())
+    synset_src = wn.synset(synset_id)
+    for synset_rel in lst_related_synsets:
+        distance = synset_src.shortest_path_distance(synset_rel)
+        # if distance is unknown, five will be used.
+        distance = distance if distance else 5
+        weight = 1 / (1 + distance)
+        for lemma in synset_rel.lemmas():
+            if lemma.key() in lst_lemma_keys:
+                continue
+            lst_lemma_keys.append(lemma.key())
+            lst_weights.append(weight)
 
-    return list(set_lemma_keys)
+    return lst_lemma_keys, lst_weights
 
 def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray]):
     prior = parent_node.prior
 
     if semantic_relation == "synonym":
         lst_related_lemma_keys = parent_node.lemma_keys
+        lst_weights = None
     elif semantic_relation == "all-relations":
-        lst_related_lemma_keys = extract_lemma_keys_from_all_semantically_related_synsets(synset_id=parent_node.id)
+        lst_related_lemma_keys, lst_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id)
+    elif semantic_relation == "all-relations-wo-weight":
+        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id)
+        lst_weights = None
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
 
-    lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys if lemma_key in basic_lemma_embeddings]
-
+    lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
     if len(lst_embs) > 0:
         mat_s = np.stack(lst_embs).squeeze()
-        posterior = prior.posterior(mat_obs=mat_s)
+        posterior = prior.posterior(mat_obs=mat_s, sample_weights=lst_weights)
     else:
         posterior = copy.deepcopy(prior)
 
@@ -97,18 +108,24 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
     # collect basic lemma embeddings that are used for updating synset-level prob. dist. (=prior of lemma-level prob. dist.).
     if semantic_relation == "synonym":
         lst_related_lemma_keys = lst_lemma_keys_in_target_synset
+        lst_weights = None
     elif semantic_relation == "all-relations":
-        lst_related_lemma_keys = extract_lemma_keys_from_all_semantically_related_synsets(synset_id=synset.name())
+        lst_related_lemma_keys, lst_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
+    elif semantic_relation == "all-relations-wo-weight":
+        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
+        lst_weights = None
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
-    dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys if lemma_key in basic_lemma_embeddings}
+
+    dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys}
 
     if inference_strategy in ("synset-then-lemma", "synset"):
         # mat_x: all lemma embeddings which relates to the target synset.
-        mat_s = np.stack(list(dict_lemma_vectors.values())).squeeze()
+        lst_lemma_vectors = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
+        mat_s = np.stack(lst_lemma_vectors).squeeze()
 
         # synset-level posterior
-        p_posterior_s = prior_distribution.posterior(mat_obs=mat_s)
+        p_posterior_s = prior_distribution.posterior(mat_obs=mat_s, sample_weights=lst_weights)
 
         for lemma_key in lst_lemma_keys_in_target_synset:
             if inference_strategy == "synset-then-lemma":
@@ -145,7 +162,8 @@ def _parse_args():
     parser.add_argument('--inference_strategy', type=str, required=True,
                         choices=["synset-then-lemma", "synset", "lemma",], help='methodologies that will be applied to sense embeddings.')
     parser.add_argument('--semantic_relation', type=str, required=True,
-                        choices=["synonym", "all-relations"], help="semantic relation which are used to update synset-level probability distribution.")
+                        choices=["synonym", "all-relations", "all-relations-wo-weight"],
+                        help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
     # parser.add_argument("--sense_level", type=str, required=True, choices=["synset","lemma_key"], help="entity level of sense representation")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
                         default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
@@ -222,12 +240,11 @@ if __name__ == "__main__":
 
     # compute synset prior distributions
     # [warning] it assigns .prior attribute for each node.
-    ROOT_SYNSETS = {
-        "n": "entity.n.01",
-        "v": "verb_dummy_root.v.01"
-    }
+    ROOT_SYNSETS = ["entity.n.01"] # noun
+    for node in dict_synset_taxonomy["verb_dummy_root.v.01"].children: # verb
+        ROOT_SYNSETS.append(node.id)
     root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu)
-    for pos, root_synset_id in ROOT_SYNSETS.items():
+    for root_synset_id in ROOT_SYNSETS:
         logging.info(f"precompute synset priors. root: {root_synset_id}")
         root_node = dict_synset_taxonomy[root_synset_id]
         root_node.prior = root_prior
