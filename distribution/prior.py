@@ -59,25 +59,32 @@ class NormalInverseWishart(object):
     def is_phi_iso(self):
         return self._is_phi_iso
 
-    def posterior(self, mat_obs: matrix) -> "NormalInverseWishart":
+    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None) -> "NormalInverseWishart":
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
         n_obs, n_dim = mat_obs.shape
         assert n_dim == self._n_dim, f"dimensionality mismatch: {n_dim} != {self._n_dim}"
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
 
         # empirical mean
-        vec_mu_e = mat_obs.mean(axis=0)
+        if sample_weights is None:
+            vec_mu_e = mat_obs.mean(axis=0)
+        else:
+            # E[X] = \sum_{i}p(x_i)x_i
+            vec_mu_e = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
 
         # empirical covariance
         if n_obs == 1:
             diag_moment = np.zeros(shape=(n_dim,), dtype=np.float)
         else:
             # diag_moment = \sum_{i=1}^{n}(x_{ik}-\bar{x_{k}})^2
-            diag_moment = np.sum((mat_obs - vec_mu_e)**2, axis=0)
-        # if self.is_phi_diag:
-        #     # take geometric mean
-        #     scalar_cov = np.exp(np.mean(np.log(diag_moment)))
-        #     diag_moment = np.ones(shape=(n_dim,)) * scalar_cov
+            if sample_weights is None:
+                diag_moment = np.sum((mat_obs - vec_mu_e)**2, axis=0)
+            else:
+                diag_moment = np.sum( ((mat_obs - vec_mu_e)**2) * n_obs * sample_weights.reshape(n_obs,1), axis=0)
 
         # \mu: weighted avg between \mu__0 and \mu_e
         vec_mu = (self._kappa * self._mu + n_obs * vec_mu_e) / (self._kappa + n_obs)
