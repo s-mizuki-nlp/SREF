@@ -278,6 +278,6 @@ if __name__ == "__main__":
     path = args.out_path
     logging.info(f"sense repr. will be saved as: {path}")
     with io.open(path, mode="wb") as ofs:
-        pickle.dump(dict_lemma_embs, ofs)
+        pickle.dump(dict_sense_representations, ofs)
 
     logging.info(f"finished. good-bye.")
