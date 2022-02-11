@@ -10,7 +10,7 @@ from nltk.corpus import wordnet as wn
 
 from bert_as_service import BertEncoder
 from vectorspace import SensesVSM
-from vectorspace import get_sk_pos
+from utils.wordnet import lemma_key_to_pos
 
 from synset_expand import retrieve_sense, gloss_extend
 import pickle
@@ -349,8 +349,8 @@ if __name__ == '__main__':
 
                         # register if our prediction belonged to a different POS than gold
                         if len(preds) > 0:
-                            pred_sk_pos = get_sk_pos(preds[0])
-                            gold_sk_pos = get_sk_pos(gold_sensekeys[0])
+                            pred_sk_pos = lemma_key_to_pos(preds[0])
+                            gold_sk_pos = lemma_key_to_pos(gold_sensekeys[0])
                             pos_confusion[gold_sk_pos][pred_sk_pos] += 1
 
                         # register how far the correct prediction was from the top of our matches

@@ -1,29 +1,11 @@
 from typing import Dict, List
-from time import time
-from functools import lru_cache
 from collections import defaultdict
 
 import numpy as np
 from nltk.corpus import wordnet as wn
 
+from utils.wordnet import lemma_key_to_pos, lemma_key_to_lemma_name
 
-def get_sk_type(sensekey):
-    return int(sensekey.split('%')[1].split(':')[0])
-
-
-def get_sk_pos(sk, tagtype='long'):
-    # merges ADJ with ADJ_SAT
-
-    if tagtype == 'long':
-        type2pos = {1: 'NOUN', 2: 'VERB', 3: 'ADJ', 4: 'ADV', 5: 'ADJ'}
-        return type2pos[get_sk_type(sk)]
-
-    elif tagtype == 'short':
-        type2pos = {1: 'n', 2: 'v', 3: 's', 4: 'r', 5: 's'}
-        return type2pos[get_sk_type(sk)]
-
-def get_sk_lemma(sensekey):
-    return sensekey.split('%')[0]
 
 class SensesVSM(object):
 
@@ -84,8 +66,8 @@ class SensesVSM(object):
 
     def load_aux_senses(self):
 
-        self.lemma_key_to_lemma = {lemma_key: get_sk_lemma(lemma_key) for lemma_key in self.lemma_keys}
-        self.lemma_key_to_postag = {lemma_key: get_sk_pos(lemma_key) for lemma_key in self.lemma_keys}
+        self.lemma_key_to_lemma = {lemma_key: lemma_key_to_lemma_name(lemma_key) for lemma_key in self.lemma_keys}
+        self.lemma_key_to_postag = {lemma_key: lemma_key_to_pos(lemma_key) for lemma_key in self.lemma_keys}
 
         self.lemma_to_lemma_keys = defaultdict(list)
         for lemma_key, lemma in self.lemma_key_to_lemma.items():

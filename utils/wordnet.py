@@ -2,7 +2,6 @@
 # -*- coding:utf-8 -*-
 
 from typing import List, Set
-
 from anytree import AnyNode
 
 import nltk
@@ -14,6 +13,22 @@ except Exception as e:
 
 from nltk.corpus import wordnet as wn
 
+def get_sk_type(sensekey):
+    return int(sensekey.split('%')[1].split(':')[0])
+
+def lemma_key_to_pos(sk, tagtype='long'):
+    # merges ADJ with ADJ_SAT
+
+    if tagtype == 'long':
+        type2pos = {1: 'NOUN', 2: 'VERB', 3: 'ADJ', 4: 'ADV', 5: 'ADJ'}
+        return type2pos[get_sk_type(sk)]
+
+    elif tagtype == 'short':
+        type2pos = {1: 'n', 2: 'v', 3: 's', 4: 'r', 5: 's'}
+        return type2pos[get_sk_type(sk)]
+
+def lemma_key_to_lemma_name(sensekey):
+    return sensekey.split('%')[0]
 
 def is_isolated_synset(synset: wn.synset, include_instance_of_relation: bool):
     if include_instance_of_relation:
@@ -36,6 +51,17 @@ def synset_to_lemma_key_and_names(synset: wn.synset, include_instance_of_lemmas:
         dict_ret[lemma.key()] = lemma.name()
 
     return dict_ret
+
+def lemma_key_to_synset_id(lemma_key: str):
+    try:
+        return wn.lemma_from_key(lemma_key).synset().name()
+    except:
+        lemma_name = lemma_key_to_lemma_name(lemma_key)
+        pos = lemma_key_to_pos(lemma_key, tagtype="short")
+        for synset in wn.synsets(lemma_name, pos):
+            if lemma_key in synset_to_lemma_keys(synset):
+                return synset.name()
+        raise ValueError(f"No synset found for key {lemma_key}")
 
 # instance-of lemmaを判定する関数
 def is_instance_of_lemma(str_lemma: str, pos: str):
