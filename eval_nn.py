@@ -9,7 +9,7 @@ import numpy as np
 from nltk.corpus import wordnet as wn
 
 from bert_as_service import BertEncoder
-from vectorspace import SensesVSM
+from vector_space import SensesVSM
 from utils.wordnet import lemma_key_to_pos
 
 from synset_expand import retrieve_sense, gloss_extend
