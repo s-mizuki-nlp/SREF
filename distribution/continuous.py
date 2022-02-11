@@ -306,6 +306,10 @@ class MultiVariateNormal(object):
 
         return ln_prob
 
+    def unnormalized_logpdf(self, vec_x: Union[vector, matrix]):
+        ln_l = -0.5 * self.mahalanobis_distance_sq(vec_x)
+        return ln_l
+
     def mahalanobis_distance_sq(self, vec_x: Union[vector, matrix]):
         """
         returns the square of the mahalanobis distance using mean and covariance of the distribution.
@@ -331,6 +335,9 @@ class MultiVariateNormal(object):
             raise NotImplementedError("unexpected input.")
 
         return dist
+
+    def mahalanobis_distance(self, vec_x: Union[vector, matrix]):
+        return np.sqrt(self.mahalanobis_distance_sq(vec_x))
 
     def cosine_similarity(self, vec_x: vector):
         """
@@ -614,6 +621,9 @@ class vonMisesFisher(object):
         ln_l = self._log_likelihood(vec_x)
         ln_norm = self.log_normalization_term
         return ln_l - ln_norm
+
+    def unnormalized_logpdf(self, vec_x: Union[vector, matrix]):
+        return self._log_likelihood(vec_x)
 
     def random(self, size: int):
         """
