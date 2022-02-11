@@ -9,8 +9,8 @@ import numpy as np
 from nltk.corpus import wordnet as wn
 
 from bert_as_service import BertEncoder
-from vectorspace import SensesVSM
-from vectorspace import get_sk_pos
+from probability_space import SenseRepresentationModel
+from utils.wordnet import lemma_key_to_pos
 
 from synset_expand import retrieve_sense, gloss_extend
 import pickle
@@ -144,7 +144,7 @@ def sec_wsd(matches):
             for synset in combine_list:
                 if synset in synsets.keys() and curr_postag not in ['ADJ', 'ADV']:
                     continue
-                sim = np.dot(curr_vector, senses_vsm.get_vec(synset.lemmas()[0].key()))
+                sim = np.dot(curr_vector, model.get_vec(synset.lemmas()[0].key()))
                 name['sim_%s' % potential_synset.name()][synset] = (
                     sim, 'relation' if synset in name[potential_synset.name()] else 'lexname')
 
@@ -160,47 +160,63 @@ def sec_wsd(matches):
     return final_key
 
 
-if __name__ == '__main__':
+def _parse_args():
 
     parser = argparse.ArgumentParser(description='Nearest Neighbors WSD Evaluation.',
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
     parser.add_argument('--sense_representation_path', type=str, required=True, help="Path to enhanced lemma-key embeddings.")
-    parser.add_argument('--similarity_metric', type=str, choices=["cosine", "l2", "likelihood"], help="Similarity metric used for nearest neighbor lookup.")
+    parser.add_argument('--sense_representation_type', type=str, required=False, choices=["MultiNormal", "vonMises"], default="MultiNormal",
+                        help="probability representation type of the sense representation. DEFAULT: MultiNormal")
+    parser.add_argument('--similarity_metric', type=str, choices=["cosine", "l2", "likelihood", "likelihood_wo_norm", "hierarchical"],
+                        help="Similarity metric used for nearest neighbor lookup.")
     parser.add_argument('--wsd_fw_path', help='Path to WSD Evaluation Framework', required=False,
                         default='data/wsd_eval/WSD_Evaluation_Framework/')
+    parser.add_argument("--work_dir", type=str, required=False, default="./results/ours/", help="directory used for temporary output. DEFAULT: ./results/ours/")
     parser.add_argument('--batch_size', type=int, default=32, help='Batch size (BERT)', required=False)
-    parser.add_argument('--merge_strategy', type=str, default='mean', choices=["first","sum","mean"],
+    parser.add_argument('--merge_strategy', type=str, default='mean', choices=["first", "sum", "mean"],
                         help='How to merge subwords of target word. DEFAULT: mean', required=False)
     parser.add_argument('--thresh', type=float, default=-float("inf"), help='Similarity threshold. DEFAULT: -inf (=disable threshold)', required=False)
     parser.add_argument('--k', type=int, default=1, help='Number of Neighbors to accept', required=False)
-    parser.add_argument('--sec_wsd', action="store_true", help='enable Try-Again mechanism. DEFAULT: False')
+    parser.add_argument('--try_again', action="store_true", help='enable Try-Again mechanism. DEFAULT: False')
     parser.add_argument("--sanity_check", action="store_true", help="enable sanity check (e.g., assert candidate lemma keys)")
-    parser.set_defaults(use_lemma=True)
-    parser.set_defaults(use_pos=True)
-    parser.set_defaults(debug=True)
+    parser.add_argument("--disable_bert_encoder", action="store_true", help="disable bert-as-service.")
+    parser.add_argument("--disable_bert_layer_pooling", action="store_true", help="disable sum pooling over BERT layers. DEFAULT: False")
     args = parser.parse_args()
+
+    return args
+
+if __name__ == '__main__':
+
+    args = _parse_args()
 
     """
     Load sense embeddings for evaluation.
     Check the dimensions of the sense embeddings to guess that they are composed with static embeddings.
     """
-    logging.info(f"connecting to bert-as-service: {args.bert_host}")
-    host_info = args.bert_host.split(":")
-    if len(host_info) == 1:
-        bert_encoder = BertEncoder(host=host_info[0])
-    elif len(host_info) == 2:
-        bert_encoder = BertEncoder(host=host_info[0], port=host_info[1])
-    else:
-        raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
 
-    logging.info(f"setup: emb_strategy:{args.emb_strategy}, sec_wsd:{args.sec_wsd}")
-    logging.info(f"Loading SensesVSM from: {args.sense_representation_path}")
+    if not args.disable_bert_encoder:
+        logging.info(f"connecting to bert-as-service: {args.bert_host}")
+        host_info = args.bert_host.split(":")
+        if len(host_info) == 1:
+            bert_encoder = BertEncoder(host=host_info[0])
+        elif len(host_info) == 2:
+            bert_encoder = BertEncoder(host=host_info[0], port=int(host_info[1]))
+        else:
+            raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
+
+    logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.sec_wsd}")
+    logging.info(f"Loading sense representation from: {args.sense_representation_path}")
 
     with io.open(args.sense_representation_path, mode='rb') as ifs:
         emb_wn = pickle.load(ifs)
-    logging.info('Loaded SensesVSM')
-    senses_vsm = SensesVSM(emb_wn, normalize=True, TEST_MODE=args.sanity_check)
+    logging.info('loaded sense representation.')
+
+    logging.info("initialize sense representation model.")
+    model = SenseRepresentationModel(path=args.sense_representation_path,
+                                     repr_type=args.sense_representation_type,
+                                     default_similarity_metric=args.similarity_metric,
+                                     TEST_MODE=args.sanity_check)
 
     """
     Initialize various counters for calculating supplementary metrics for ALL dataset.
@@ -227,24 +243,20 @@ if __name__ == '__main__':
         Gold labels (sensekeys) only used for reporting accuracy during evaluation.
         """
         wsd_fw_set_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.data.xml"
-        wsd_fw_set_cache_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.data.pkl"
         wsd_fw_gold_path = args.wsd_fw_path + f"Evaluation_Datasets/{test_set}/{test_set}.gold.key.txt"
         id2senses = get_id2sks(wsd_fw_gold_path)
-        if os.path.exists(wsd_fw_set_cache_path):
-            logging.info(f"loading evalset from cache file: {wsd_fw_set_cache_path}")
-            with io.open(wsd_fw_set_cache_path, mode="rb") as ifs:
-                eval_instances = pickle.load(ifs)
-        else:
-            logging.info(f"loading evalset from original file: {wsd_fw_set_path}")
-            eval_instances = load_wsd_fw_set(wsd_fw_set_path)
-            logging.info(f"saving evalset into cache file: {wsd_fw_set_cache_path}")
+        logging.info(f"loading evalset from original file: {wsd_fw_set_path}")
+        eval_instances = load_wsd_fw_set(wsd_fw_set_path)
 
         """
         Iterate over evaluation instances and write predictions in WSD_Evaluation_Framework's format.
         File with predictions is processed by the official scorer after iterating over all instances.
         """
 
-        results_path = 'data/results/%s.%s.%s.key' % (args.emb_strategy, test_set, args.merge_strategy)
+        # temporary file used for saving prediction results.
+        result_filename = f"{args.sense_representation_type}_{args.similarity_metric}_TA-{args.try_again}_{test_set}.key"
+        results_path = os.path.join(args.work_dir, result_filename)
+
         with open(results_path, 'w') as results_f:
             for batch_idx, batch in enumerate(chunks(eval_instances, args.batch_size)):
                 batch_sents = [sent_info['tokenized_sentence'] for sent_info in batch]
@@ -264,54 +276,34 @@ if __name__ == '__main__':
                         curr_lemma = sent_info['lemmas'][mw_idx]
                         curr_postag = sent_info['pos'][mw_idx]
 
-                        if args.use_lemma and (curr_lemma not in senses_vsm.known_lemmas):
+                        if curr_lemma not in model.known_lemmas:
                             logging.warning(f"unknown lemma. ignore: {curr_lemma}|{curr_postag}")
                             n_unk_lemmas += 1
                             continue  # skips hurt performance in official scorer
 
                         curr_tokens = [sent_info['tokens'][i] for i in tok_idxs]
                         curr_vector = np.array([sent_bert[i][1] for i in tok_idxs]).mean(axis=0)
-                        curr_vector = curr_vector / np.linalg.norm(curr_vector)
-
-                        """
-                        Compose test-time embedding for matching with sense embeddings in SensesVSM.
-                        Test-time embedding corresponds to stack of contextual and (possibly) static embeddings.
-                        Stacking composition performed according to dimensionality of sense embeddings.
-                        """
-                        if senses_vsm.ndims == 1024:
-                            curr_vector = curr_vector
-
-                        # duplicating contextual feature for cos similarity against features from
-                        # sense annotations and glosses that belong to the same NLM
-                        elif senses_vsm.ndims == 1024+1024:
-                            curr_vector = np.hstack((curr_vector, curr_vector))
-
-                        curr_vector = curr_vector / np.linalg.norm(curr_vector)
 
                         """
                         Matches test-time embedding against sense embeddings in SensesVSM.
                         use_lemma and use_pos flags condition filtering of candidate senses.
                         Matching is actually cosine similarity (most similar), or 1-NN.
                         """
-                        matches = []
-
-                        if args.use_lemma and args.use_pos:  # the usual for WSD
-                            matches = senses_vsm.match_senses(curr_vector, curr_lemma, curr_postag, topn=None)
-                        elif args.use_lemma:
-                            matches = senses_vsm.match_senses(curr_vector, curr_lemma, None, topn=None)
-                        elif args.use_pos:
-                            matches = senses_vsm.match_senses(curr_vector, None, curr_postag, topn=None)
-
-                        else:  # corresponds to Uninformed Sense Matching (USM)
-                            matches = senses_vsm.match_senses(curr_vector, None, None, topn=None)
-
-                        num_options.append(len(matches))
+                        if curr_postag in ('NOUN', 'VERB'):
+                            metric = args.similarity_metric
+                        elif curr_postag in ('ADJ', 'ADV'):
+                            metric = "cosine"
+                        lst_predicted_senses = model.match_senses(metric=metric,
+                                                                  entity_embedding=curr_vector,
+                                                                  lemma=curr_lemma, postag=curr_postag,
+                                                                  topn=None)
+                        num_options.append(len(lst_predicted_senses))
 
                         # predictions can be further filtered by similarity threshold or number of accepted neighbors
                         # if specified in CLI parameters
-                        preds = [sk for sk, sim in matches if sim > args.thresh][:args.k]
-                        if args.sec_wsd:
-                            preds = sec_wsd(matches)[:1]
+                        preds = [lemma_key for lemma_key, similarity in lst_predicted_senses if similarity > args.thresh][:args.k]
+                        if args.try_again:
+                            preds = sec_wsd(lst_predicted_senses)[:1]
                         if len(preds) > 0:
                             results_f.write('%s %s\n' % (curr_sense, preds[0]))
 
@@ -335,13 +327,13 @@ if __name__ == '__main__':
 
                         # register if our prediction belonged to a different POS than gold
                         if len(preds) > 0:
-                            pred_sk_pos = get_sk_pos(preds[0])
-                            gold_sk_pos = get_sk_pos(gold_sensekeys[0])
+                            pred_sk_pos = lemma_key_to_pos(preds[0])
+                            gold_sk_pos = lemma_key_to_pos(gold_sensekeys[0])
                             pos_confusion[gold_sk_pos][pred_sk_pos] += 1
 
                         # register how far the correct prediction was from the top of our matches
                         correct_idx = None
-                        for idx, (matched_sensekey, matched_score) in enumerate(matches):
+                        for idx, (matched_sensekey, matched_score) in enumerate(lst_predicted_senses):
                             if matched_sensekey in gold_sensekeys:
                                 correct_idx = idx
                                 correct_idxs.append(idx)
