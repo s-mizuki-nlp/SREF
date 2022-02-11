@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Union
 import os, sys, io, copy, pickle
 import argparse
 from nltk.corpus import wordnet as wn
@@ -100,7 +100,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                                             prior_distribution: "NormalInverseWishart",
                                             semantic_relation: str,
                                             basic_lemma_embeddings: Dict[str, np.ndarray],
-                                            inference_strategy: str) -> Dict[str, Dict[str, np.ndarray]]:
+                                            inference_strategy: str) -> Tuple[Dict[str, Dict[str, np.ndarray]], Union[None, Dict[str, np.ndarray]]]:
     dict_ret = {}
 
     lst_lemma_keys_in_target_synset = synset_to_lemma_keys(synset)
@@ -141,6 +141,8 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                 dict_ret[lemma_key] = p_posterior_s.approx_posterior_predictive().serialize()
 
     elif inference_strategy == "lemma":
+        p_posterior_s = None
+
         # lemma-level posterior
         for lemma_key in lst_lemma_keys_in_target_synset:
             if lemma_key in dict_lemma_vectors:
@@ -150,7 +152,11 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
             else:
                 dict_ret[lemma_key] = prior_distribution.approx_posterior_predictive().serialize()
 
-    return dict_ret
+    # return lemma-key level repr. and synset level repr (if available).
+    if p_posterior_s is None:
+        return dict_ret, None
+    else:
+        return dict_ret, p_posterior_s.approx_posterior_predictive().serialize()
 
 
 def _parse_args():
@@ -254,30 +260,33 @@ if __name__ == "__main__":
 
     # compute predictive posterior distributions
     logging.info(f"compute sense representation for all lemmas...")
-    dict_sense_representations = dict()
+    dict_lemma_sense_representations = {}; dict_synset_sense_representations = {}
     for synset in wn.all_synsets():
         pos = synset.pos()
         synset_id = synset.name()
         if pos in ["a","r","s"]:
-            dict_lemma_embs = compute_sense_representations_adverb_adjective(synset=synset,
-                                           basic_lemma_embeddings=dict_lemma_key_embeddings_for_sref,
-                                           variance=1.0)
+            dict_lemma_reprs = compute_sense_representations_adverb_adjective(synset=synset,
+                                                                              basic_lemma_embeddings=dict_lemma_key_embeddings_for_sref,
+                                                                              variance=1.0)
         elif pos in ["n","v"]:
             p_synset_prior = dict_synset_taxonomy[synset_id].prior
-            dict_lemma_embs = compute_sense_representations_noun_verb(synset=synset,
-                                                                      semantic_relation=args.semantic_relation,
-                                                                      prior_distribution=p_synset_prior,
-                                                                      basic_lemma_embeddings=dict_lemma_key_embeddings,
-                                                                      inference_strategy=args.inference_strategy
-                                                                      )
-        dict_sense_representations.update(dict_lemma_embs)
-    logging.info(f"done. number of sense representations(#lemmas): {len(dict_sense_representations)}")
+            dict_lemma_reprs, synset_repr = compute_sense_representations_noun_verb(synset=synset,
+                                                                       semantic_relation=args.semantic_relation,
+                                                                       prior_distribution=p_synset_prior,
+                                                                       basic_lemma_embeddings=dict_lemma_key_embeddings,
+                                                                       inference_strategy=args.inference_strategy
+                                                                       )
+            dict_synset_sense_representations[synset_id] = synset_repr
 
+        dict_lemma_sense_representations.update(dict_lemma_reprs)
+
+    logging.info(f"done. number of sense repr. #lemmas: {len(dict_lemma_sense_representations)}, #synsets: {len(dict_synset_sense_representations)}")
 
     # save as binary file (serialize)
+    object = {"lemma":dict_lemma_sense_representations, "synset":dict_synset_sense_representations}
     path = args.out_path
     logging.info(f"sense repr. will be saved as: {path}")
     with io.open(path, mode="wb") as ofs:
-        pickle.dump(dict_sense_representations, ofs)
+        pickle.dump(object, ofs)
 
     logging.info(f"finished. good-bye.")
