@@ -2,6 +2,7 @@
 data/
 sentence_dict_*
 data
+results
 
 # IDE
 .idea/*
