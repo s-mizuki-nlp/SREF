@@ -526,6 +526,17 @@ class vonMisesFisher(object):
 
         return ret
 
+    def serialize(self):
+        dict_ret = {
+            "vec_mu": self.mean,
+            "scalar_kappa": self.kappa
+        }
+        return dict_ret
+
+    @classmethod
+    def deserialize(cls, object: Dict[str, Any]):
+        return cls.__init__(**object)
+
     def save(self, file_path: str):
         assert self._validate(), "corrupted inner structure detected."
         with io.open(file_path, mode="wb") as ofs:
