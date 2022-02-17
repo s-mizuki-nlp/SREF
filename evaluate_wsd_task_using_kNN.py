@@ -205,7 +205,7 @@ if __name__ == '__main__':
         else:
             raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
 
-    logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.sec_wsd}")
+    logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.try_again}")
     logging.info(f"Loading sense representation from: {args.sense_representation_path}")
 
     with io.open(args.sense_representation_path, mode='rb') as ifs:
