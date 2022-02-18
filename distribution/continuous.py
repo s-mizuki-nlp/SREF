@@ -256,7 +256,7 @@ class MultiVariateNormal(object):
 
     @classmethod
     def deserialize(cls, object: Dict[str, Any]):
-        return cls.__init__(**object)
+        return cls(**object)
 
     def density_plot(self, fig_and_ax=None, vis_range: Optional[Tuple[float]] = None,
                      figsize: Optional[Tuple[float]] = None,
@@ -542,7 +542,7 @@ class vonMisesFisher(object):
 
     @classmethod
     def deserialize(cls, object: Dict[str, Any]):
-        return cls.__init__(**object)
+        return cls(**object)
 
     def save(self, file_path: str):
         assert self._validate(), "corrupted inner structure detected."

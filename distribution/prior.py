@@ -16,11 +16,17 @@ from .continuous import MultiVariateNormal
 class NormalInverseWishart(object):
 
     __EPS = 1E-5
+    _AVAILABLE_POSTERIOR_INFERENCE_METHOD = ["default", "known_dof", "known_variance", "predictive_posterior"]
 
     def __init__(self, vec_mu: vector, kappa: float, nu: float,
+                 posterior_inference_method: str,
                  vec_phi: Optional[vector] = None, scalar_phi: Optional[float] = None):
 
+        assert posterior_inference_method in self._AVAILABLE_POSTERIOR_INFERENCE_METHOD, \
+            f"invalid `posterior_inference_method` value. valid values are: {self._AVAILABLE_POSTERIOR_INFERENCE_METHOD}"
+
         self._n_dim = len(vec_mu)
+        self._posterior_inference_method = posterior_inference_method
         self._mu = vec_mu
         if vec_phi is not None:
             self._diag_phi = vec_phi
@@ -47,6 +53,10 @@ class NormalInverseWishart(object):
 
         return True
 
+    @classmethod
+    def AVAILABLE_POSTERIOR_INFERENCE_METHOD(cls):
+        return cls._AVAILABLE_POSTERIOR_INFERENCE_METHOD
+
     @property
     def n_dim(self):
         return self._n_dim
@@ -59,15 +69,19 @@ class NormalInverseWishart(object):
     def is_phi_iso(self):
         return self._is_phi_iso
 
-    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None) -> "NormalInverseWishart":
-        if mat_obs.ndim == 1:
-            mat_obs = mat_obs.reshape((1, -1))
+    def _posterior_known_variance(self, mat_obs: matrix, sample_weights: Optional[vector] = None) -> "NormalInverseWishart":
         n_obs, n_dim = mat_obs.shape
-        assert n_dim == self._n_dim, f"dimensionality mismatch: {n_dim} != {self._n_dim}"
-        if sample_weights is not None:
-            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
-            # normalize sample weights as the sum equals to 1.0
-            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        _kappa = self._kappa
+        _nu = self._nu
+
+        return NormalInverseWishart(vec_mu=vec_mu, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
+                                    posterior_inference_method=self._posterior_inference_method)
+
+    def _posterior_default(self, mat_obs: matrix, sample_weights: Optional[vector] = None,
+                           kappa_dash: Optional[float] = None, nu_dash: Optional[float] = None) -> "NormalInverseWishart":
+
+        n_obs, n_dim = mat_obs.shape
 
         # empirical mean
         if sample_weights is None:
@@ -90,8 +104,14 @@ class NormalInverseWishart(object):
         vec_mu = (self._kappa * self._mu + n_obs * vec_mu_e) / (self._kappa + n_obs)
 
         # \kappa, \nu: simple update
-        kappa = self._kappa + n_obs
-        nu = self._nu + n_obs
+        if kappa_dash is None:
+            _kappa = self._kappa + n_obs
+        else:
+            _kappa = kappa_dash
+        if nu_dash is None:
+            _nu = self._nu + n_obs
+        else:
+            _nu = nu_dash
 
         # \Phi but diagonal version
         # \delta \mu^{m} = {(\mu^e_{k} - \mu_0_k)^2}
@@ -99,7 +119,40 @@ class NormalInverseWishart(object):
         diag_mu_diff_coef = (self._kappa * n_obs) / (self._kappa + n_obs)
         diag_phi = self._diag_phi + diag_moment + diag_mu_diff_coef * diag_mu_diff_moment
 
-        return NormalInverseWishart(vec_mu=vec_mu, kappa=kappa, nu=nu, vec_phi=diag_phi)
+        return NormalInverseWishart(vec_mu=vec_mu, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
+                                    posterior_inference_method=self._posterior_inference_method)
+
+    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "NormalInverseWishart":
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+        assert n_dim == self._n_dim, f"dimensionality mismatch: {n_dim} != {self._n_dim}"
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        if self._posterior_inference_method == "default":
+            return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
+        elif self._posterior_inference_method == "known_dof":
+            # NIW with known \kappa and \nu. if not given externally, use ourselves.
+            _kappa = kwargs.get("kappa_dash", self._kappa)
+            _nu = kwargs.get("nu_dash", self._nu)
+            return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights, kappa_dash=_kappa, nu_dash=_nu)
+        elif self._posterior_inference_method == "known_variance":
+            return self._posterior_known_variance(mat_obs=mat_obs, sample_weights=sample_weights)
+        elif self._posterior_inference_method == "predictive_posterior":
+            # predictive_posterior: returns NIW() with its mean and variance are identical to the "default" posterior predictive.
+            predictive_posterior = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).approx_posterior_predictive()
+            assert predictive_posterior.is_cov_diag, f"posterior predictive covariance is not diagonal."
+            vec_mu = predictive_posterior.mean
+            vec_cov_diag = np.diag(predictive_posterior.covariance)
+            nu_minus_dof = self._nu - n_dim - 1
+            # E[\Sigma] = \Phi / (\nu - p - 1) where p is the dimension size.
+            vec_phi_diag = vec_cov_diag * nu_minus_dof
+            posterior = NormalInverseWishart(vec_mu=vec_mu, kappa=self._kappa, nu=self._nu, vec_phi=vec_phi_diag,
+                                             posterior_inference_method=self._posterior_inference_method)
+            return posterior
 
     def approx_posterior_predictive(self, force_isotropic: bool = False) -> MultiVariateNormal:
         # exact posterior predictive is t-dist. We will approximate it with multivariate normal.

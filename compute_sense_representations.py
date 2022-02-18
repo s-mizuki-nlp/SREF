@@ -42,8 +42,10 @@ def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: 
     return lst_lemma_keys, lst_weights
 
 def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray]):
+    # synset prior is the prob. distribution of parent synset.
     prior = parent_node.prior
 
+    # then we collect the parent synset's basic lemma embeddings along with semanticall-related synsets.
     if semantic_relation == "synonym":
         lst_related_lemma_keys = parent_node.lemma_keys
         lst_weights = None
@@ -55,6 +57,7 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
 
+    # we compute posterior prob. distribution of parent synset.
     lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
     if len(lst_embs) > 0:
         mat_s = np.stack(lst_embs).squeeze()
@@ -62,6 +65,9 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     else:
         posterior = copy.deepcopy(prior)
 
+    # posterior distribution is assigned as the prior distribution of children nodes.
+    # i.e., let \pi as prior, \pi_{child}(\theta) = p(\theta|embs_{parent}) \propto p(embs_{parent}|\theta) \pi_{parent}(\theta)
+    # synset prior will be used as the prior distribution of of synset or lemma representation. ref: compute_sense_representations_noun_verb()
     for child_node in parent_node.children:
         child_node.prior = posterior
         update_children_priors(parent_node=child_node, semantic_relation=semantic_relation, basic_lemma_embeddings=basic_lemma_embeddings)
@@ -170,9 +176,11 @@ def _parse_args():
     parser.add_argument('--semantic_relation', type=str, required=True,
                         choices=["synonym", "all-relations", "all-relations-wo-weight"],
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
+    parser.add_argument("--posterior_inference_method", type=str, required=True, choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
+                        help=f"method used for posterior inference.")
     # parser.add_argument("--sense_level", type=str, required=True, choices=["synset","lemma_key"], help="entity level of sense representation")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
+                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
@@ -191,6 +199,7 @@ def _parse_args():
         path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                          strategy=args.inference_strategy,
                                          relation=args.semantic_relation,
+                                         posterior=args.posterior_inference_method,
                                          kappa=args.kappa,
                                          nu_minus_dof=args.nu_minus_dof,
                                          lemma_embeddings_name=lemma_embeddings_name)
@@ -249,7 +258,8 @@ if __name__ == "__main__":
     ROOT_SYNSETS = ["entity.n.01"] # noun
     for node in dict_synset_taxonomy["verb_dummy_root.v.01"].children: # verb
         ROOT_SYNSETS.append(node.id)
-    root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu)
+    root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu,
+                                      posterior_inference_method=args.posterior_inference_method)
     for root_synset_id in ROOT_SYNSETS:
         logging.info(f"precompute synset priors. root: {root_synset_id}")
         root_node = dict_synset_taxonomy[root_synset_id]
