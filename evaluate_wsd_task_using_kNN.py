@@ -254,7 +254,8 @@ if __name__ == '__main__':
         """
 
         # temporary file used for saving prediction results.
-        result_filename = f"{args.sense_representation_type}_{args.similarity_metric}_TA-{args.try_again}_{test_set}.key"
+        sense_repr_name, _ = os.path.splitext(os.path.basename(args.sense_representation_path))
+        result_filename = f"{sense_repr_name}_{args.similarity_metric}_TA-{args.try_again}_{test_set}.key"
         results_path = os.path.join(args.work_dir, result_filename)
 
         with open(results_path, 'w') as results_f:
