@@ -195,7 +195,7 @@ def _parse_args():
     parser.add_argument("--posterior_inference_parameter_estimation", type=str, required=False, default="mean", choices=["posterior_predictive", "mean"],
                         help=f"parameter estimation method of posterior inference. DEFAULT: mean")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
+                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
@@ -214,7 +214,7 @@ def _parse_args():
         path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                          strategy=args.inference_strategy,
                                          relation=args.semantic_relation,
-                                         posterior=args.posterior_inference_method,
+                                         posterior_inference_method=args.posterior_inference_method,
                                          kappa=args.kappa,
                                          nu_minus_dof=args.nu_minus_dof,
                                          lemma_embeddings_name=lemma_embeddings_name)
@@ -266,7 +266,7 @@ if __name__ == "__main__":
         logging.info(f"empirical variance(geo. mean): {scalar_cov:1.5f}")
     vec_phi_diag = vec_cov_diag * args.nu_minus_dof
     scalar_phi_diag = np.exp(np.mean(np.log(vec_phi_diag + 1E-15)))
-    logging.info(f"kappa = {pi_kappa:1.3f}, delta_nu = {args.nu_minus_dof:1.2f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
+    logging.info(f"kappa = {pi_kappa:1.4f}, delta_nu = {args.nu_minus_dof:1.4f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
 
     # compute synset prior distributions
     # [warning] it assigns .prior attribute for each node.
@@ -309,7 +309,7 @@ if __name__ == "__main__":
     logging.info(f"done. number of sense repr. #lemmas: {len(dict_lemma_sense_representations)}, #synsets: {len(dict_synset_sense_representations)}")
 
     # save as binary file (serialize)
-    object = {"lemma":dict_lemma_sense_representations, "synset":dict_synset_sense_representations}
+    object = {"lemma":dict_lemma_sense_representations, "synset":dict_synset_sense_representations, "meta":vars(args)}
     path = args.out_path
     logging.info(f"sense repr. will be saved as: {path}")
     with io.open(path, mode="wb") as ofs:
