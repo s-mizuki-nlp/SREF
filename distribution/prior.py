@@ -176,12 +176,16 @@ class NormalInverseWishart(object):
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights, kappa_dash=_kappa, nu_dash=_nu)
         elif self._posterior_inference_method == "known_variance":
             return self._posterior_known_variance(mat_obs=mat_obs, sample_weights=sample_weights)
-        elif self._posterior_inference_method == "predictive_posterior":
-            # predictive_posterior: returns NIW() with its mean and variance are identical to the "default" posterior predictive.
-            predictive_posterior = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).approx_posterior_predictive()
-            assert predictive_posterior.is_cov_diag, f"posterior predictive covariance is not diagonal."
-            vec_mu = predictive_posterior.mean
-            vec_cov_diag = np.diag(predictive_posterior.covariance)
+        elif self._posterior_inference_method in ("predictive_posterior", "mean_posterior"):
+            if self._posterior_inference_method == "predictive_posterior":
+                # predictive_posterior: returns NIW() with its mean and variance are identical to the "default" posterior predictive.
+                predictive_posterior = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).approx_posterior_predictive()
+                assert predictive_posterior.is_cov_diag, f"posterior predictive covariance is not diagonal."
+                vec_mu = predictive_posterior.mean
+                vec_cov_diag = np.diag(predictive_posterior.covariance)
+            elif self._posterior_inference_method == "mean_posterior":
+                vec_mu, vec_cov_diag = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).mean
+
             nu_minus_dof = self._nu - n_dim - 1
             # E[\Sigma] = \Phi / (\nu - p - 1) where p is the dimension size.
             vec_phi_diag = vec_cov_diag * nu_minus_dof
