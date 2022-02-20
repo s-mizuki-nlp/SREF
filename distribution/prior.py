@@ -16,7 +16,7 @@ from .continuous import MultiVariateNormal
 class NormalInverseWishart(object):
 
     __EPS = 1E-5
-    _AVAILABLE_POSTERIOR_INFERENCE_METHOD = ["default", "known_dof", "known_variance", "predictive_posterior"]
+    _AVAILABLE_POSTERIOR_INFERENCE_METHOD = ["default", "known_dof", "known_variance", "predictive_posterior", "mean_posterior"]
 
     def __init__(self, vec_mu: vector, kappa: float, nu: float,
                  posterior_inference_method: str,
@@ -24,6 +24,9 @@ class NormalInverseWishart(object):
 
         assert posterior_inference_method in self._AVAILABLE_POSTERIOR_INFERENCE_METHOD, \
             f"invalid `posterior_inference_method` value. valid values are: {self._AVAILABLE_POSTERIOR_INFERENCE_METHOD}"
+        if posterior_inference_method in ("known_dof",):
+            warnings.warn(f"`{posterior_inference_method}` isn't recommended because covariance will diverge when \kappa or \nu - DoF is small compared to 1.0.")
+            warnings.warn(f"We recommend using `mean_posterior` or `predictive_posterior` instead.")
 
         self._n_dim = len(vec_mu)
         self._posterior_inference_method = posterior_inference_method
@@ -70,12 +73,43 @@ class NormalInverseWishart(object):
         return self._is_phi_iso
 
     def _posterior_known_variance(self, mat_obs: matrix, sample_weights: Optional[vector] = None) -> "NormalInverseWishart":
+        # Theoretically conjugate prior of the multivariate normal with known covariance is the multivariate normal (not normal inverse-wishart).
+        # In order to simplify the implementation, we alternatively use NIW with \kappa_0 = \nu_0 = 1.0 as the conjugate prior.
         n_obs, n_dim = mat_obs.shape
 
-        _kappa = self._kappa
-        _nu = self._nu
+        # dummy DoF parameters
+        kappa_dash = 1.0
+        nu_dash = 1.0 + n_dim + 1
 
-        return NormalInverseWishart(vec_mu=vec_mu, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
+        # empirical mean
+        if sample_weights is None:
+            vec_mu_e = mat_obs.mean(axis=0)
+        else:
+            # E[X] = \sum_{i}p(x_i)x_i
+            # note: sample_weights are normalized
+            vec_mu_e = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+
+        # empirical variance as the known variance
+        if n_obs == 1:
+            vec_diag_cov_e = np.zeros(shape=(n_dim,), dtype=np.float)
+        else:
+            # diag_moment = \sum_{i=1}^{n}(x_{ik}-\bar{x_{k}})^2
+            if sample_weights is None:
+                vec_diag_cov_e = np.sum((mat_obs - vec_mu_e)**2, axis=0) / (n_obs - 1)
+            else:
+                vec_diag_cov_e = np.sum( ((mat_obs - vec_mu_e)**2) * n_obs * sample_weights.reshape(n_obs,1), axis=0) / (n_obs - 1)
+
+        # prior mean and variance
+        vec_mu_0, vec_diag_cov_0 = self.mean
+
+        # posterior mean and variance using diagonal approximation
+        # \Sigma'
+        vec_diag_cov_dash = vec_diag_cov_0 * vec_diag_cov_e / (vec_diag_cov_e + n_obs * vec_diag_cov_0)
+        # \mu'
+        vec_mu_dash = (vec_diag_cov_e * vec_mu_0 + n_obs * vec_diag_cov_0 * vec_mu_e) / (vec_diag_cov_e + n_obs * vec_diag_cov_0)
+        vec_diag_phi = vec_diag_cov_dash * (nu_dash - n_dim - 1) # = \Sigma'
+
+        return NormalInverseWishart(vec_mu=vec_mu_dash, kappa=kappa_dash, nu=nu_dash, vec_phi=vec_diag_phi,
                                     posterior_inference_method=self._posterior_inference_method)
 
     def _posterior_default(self, mat_obs: matrix, sample_weights: Optional[vector] = None,
@@ -136,6 +170,7 @@ class NormalInverseWishart(object):
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
         elif self._posterior_inference_method == "known_dof":
             # NIW with known \kappa and \nu. if not given externally, use ourselves.
+            # This isn't recommended because covariance will diverge when \kappa or \nu - DoF is small compared to 1.0
             _kappa = kwargs.get("kappa_dash", self._kappa)
             _nu = kwargs.get("nu_dash", self._nu)
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights, kappa_dash=_kappa, nu_dash=_nu)
@@ -166,3 +201,15 @@ class NormalInverseWishart(object):
             p_dist = MultiVariateNormal(vec_mu=vec_mu, vec_cov=diag_cov)
 
         return p_dist
+
+    @property
+    def mean(self) -> Tuple[np.ndarray, np.ndarray]:
+        # it returns the expectation of the mean vector \mu and diagonal elements of covariance matrix \Sigma.
+        # E[\mu] = \mu_{0}
+        vec_mu = self._mu
+        # E[\Sigma] = \frac{\Phi}{\nu - p - 1} for \nu > p + 1
+        diag_cov_coef = 1.0 / (self._nu - self.n_dim - 1)
+        vec_diag_cov = diag_cov_coef * self._diag_phi
+
+        # return as tuple
+        return (vec_mu, vec_diag_cov)
