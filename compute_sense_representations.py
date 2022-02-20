@@ -101,9 +101,23 @@ def compute_sense_representations_adverb_adjective(synset: wn.synset,
 
     return dict_ret
 
+def _compute_posterior_multivariate_normal_params(posterior_distribution: "NormalInverseWishart", method: str) -> Dict[str, np.ndarray]:
+    if method == "posterior_predictive":
+        # \mu = \mu_{0}; \Sigma = \frac{\Phi}{\nu_0 -p + 1}\frac{\kappa_0+1}{\kappa_0}
+        params = posterior_distribution.approx_posterior_predictive().serialize()
+    elif method == "mean":
+        # \mu = \mu_{0}; \Sigma = \frac{\Phi}{\nu_0 - p - 1}
+        vec_mean, vec_cov_diag = posterior_distribution.mean
+        # return as dict
+        params = {
+            "vec_mu": vec_mean,
+            "vec_cov": vec_cov_diag
+        }
+    return params
 
 def compute_sense_representations_noun_verb(synset: wn.synset,
                                             prior_distribution: "NormalInverseWishart",
+                                            posterior_parameter_estimatnion: str,
                                             semantic_relation: str,
                                             basic_lemma_embeddings: Dict[str, np.ndarray],
                                             inference_strategy: str) -> Tuple[Dict[str, Dict[str, np.ndarray]], Union[None, Dict[str, np.ndarray]]]:
@@ -140,11 +154,11 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                     # mat_l: (n_obs, n_dim)
                     mat_l = dict_lemma_vectors[lemma_key]
                     p_posterior_s_l = p_posterior_s.posterior(mat_obs=mat_l)
-                    dict_ret[lemma_key] = p_posterior_s_l.approx_posterior_predictive().serialize()
+                    dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_l, method=posterior_parameter_estimatnion)
                 else:
-                    dict_ret[lemma_key] = p_posterior_s.approx_posterior_predictive().serialize()
+                    dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
             elif inference_strategy == "synset":
-                dict_ret[lemma_key] = p_posterior_s.approx_posterior_predictive().serialize()
+                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
 
     elif inference_strategy == "lemma":
         p_posterior_s = None
@@ -154,15 +168,15 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
             if lemma_key in dict_lemma_vectors:
                 mat_l = dict_lemma_vectors[lemma_key]
                 p_posterior_l = prior_distribution.posterior(mat_obs=mat_l)
-                dict_ret[lemma_key] = p_posterior_l.approx_posterior_predictive().serialize()
+                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_l, method=posterior_parameter_estimatnion)
             else:
-                dict_ret[lemma_key] = prior_distribution.approx_posterior_predictive().serialize()
+                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(prior_distribution, method=posterior_parameter_estimatnion)
 
     # return lemma-key level repr. and synset level repr (if available).
     if p_posterior_s is None:
         return dict_ret, None
     else:
-        return dict_ret, p_posterior_s.approx_posterior_predictive().serialize()
+        return dict_ret, _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
 
 
 def _parse_args():
@@ -178,7 +192,8 @@ def _parse_args():
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
     parser.add_argument("--posterior_inference_method", type=str, required=True, choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
                         help=f"method used for posterior inference.")
-    # parser.add_argument("--sense_level", type=str, required=True, choices=["synset","lemma_key"], help="entity level of sense representation")
+    parser.add_argument("--posterior_inference_parameter_estimation", type=str, required=False, default="mean", choices=["posterior_predictive", "mean"],
+                        help=f"parameter estimation method of posterior inference. DEFAULT: mean")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
                         default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.2f}_nu-{nu_minus_dof:1.2f}_{lemma_embeddings_name}.pkl')
     parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
@@ -281,11 +296,12 @@ if __name__ == "__main__":
         elif pos in ["n","v"]:
             p_synset_prior = dict_synset_taxonomy[synset_id].prior
             dict_lemma_reprs, synset_repr = compute_sense_representations_noun_verb(synset=synset,
-                                                                       semantic_relation=args.semantic_relation,
-                                                                       prior_distribution=p_synset_prior,
-                                                                       basic_lemma_embeddings=dict_lemma_key_embeddings,
-                                                                       inference_strategy=args.inference_strategy
-                                                                       )
+                                                                                    semantic_relation=args.semantic_relation,
+                                                                                    posterior_parameter_estimatnion=args.posterior_inference_parameter_estimation,
+                                                                                    prior_distribution=p_synset_prior,
+                                                                                    basic_lemma_embeddings=dict_lemma_key_embeddings,
+                                                                                    inference_strategy=args.inference_strategy
+                                                                                    )
             dict_synset_sense_representations[synset_id] = synset_repr
 
         dict_lemma_sense_representations.update(dict_lemma_reprs)
