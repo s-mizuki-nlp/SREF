@@ -113,9 +113,13 @@ class NormalInverseWishart(object):
                                     posterior_inference_method=self._posterior_inference_method)
 
     def _posterior_default(self, mat_obs: matrix, sample_weights: Optional[vector] = None,
-                           kappa_dash: Optional[float] = None, nu_dash: Optional[float] = None) -> "NormalInverseWishart":
+                           kappa_dash: Optional[float] = None, nu_dash: Optional[float] = None,
+                           normalize: bool = False) -> "NormalInverseWishart":
 
         n_obs, n_dim = mat_obs.shape
+
+        # prior mean
+        vec_mu_0 = self._mu
 
         # empirical mean
         if sample_weights is None:
@@ -123,6 +127,10 @@ class NormalInverseWishart(object):
         else:
             # E[X] = \sum_{i}p(x_i)x_i
             vec_mu_e = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+
+        if normalize:
+            vec_mu_0 = vec_mu_0 / (np.linalg.norm(vec_mu_0) + 1E-15)
+            vec_mu_e = vec_mu_e / (np.linalg.norm(vec_mu_e) + 1E-15)
 
         # empirical covariance
         if n_obs == 1:
@@ -134,8 +142,10 @@ class NormalInverseWishart(object):
             else:
                 diag_moment = np.sum( ((mat_obs - vec_mu_e)**2) * n_obs * sample_weights.reshape(n_obs,1), axis=0)
 
-        # \mu: weighted avg between \mu__0 and \mu_e
-        vec_mu = (self._kappa * self._mu + n_obs * vec_mu_e) / (self._kappa + n_obs)
+        # \mu: weighted avg between \mu_0 and \mu_e
+        vec_mu_dash = (self._kappa * vec_mu_0 + n_obs * vec_mu_e) / (self._kappa + n_obs)
+        if normalize:
+            vec_mu_dash = vec_mu_dash / (np.linalg.norm(vec_mu_dash) + 1E-15)
 
         # \kappa, \nu: simple update
         if kappa_dash is None:
@@ -149,11 +159,11 @@ class NormalInverseWishart(object):
 
         # \Phi but diagonal version
         # \delta \mu^{m} = {(\mu^e_{k} - \mu_0_k)^2}
-        diag_mu_diff_moment  = (vec_mu_e - self._mu)**2
+        diag_mu_diff_moment  = (vec_mu_e - vec_mu_0)**2
         diag_mu_diff_coef = (self._kappa * n_obs) / (self._kappa + n_obs)
         diag_phi = self._diag_phi + diag_moment + diag_mu_diff_coef * diag_mu_diff_moment
 
-        return NormalInverseWishart(vec_mu=vec_mu, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
+        return NormalInverseWishart(vec_mu=vec_mu_dash, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
                                     posterior_inference_method=self._posterior_inference_method)
 
     def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "NormalInverseWishart":
