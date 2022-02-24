@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%d-%b-%y %H:%M:%S')
 
 
-def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: str) -> Tuple[List[str], List[int]]:
+def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: str, distinct: bool = False) -> Tuple[List[str], List[int]]:
     lst_lemma_keys = []; lst_weights = []
     lst_related_synsets = gloss_extend(o_sense=synset_id, emb_strategy="all-relations")
     synset_src = wn.synset(synset_id)
@@ -34,8 +34,9 @@ def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: 
         distance = distance if distance else 5
         weight = 1 / (1 + distance)
         for lemma in synset_rel.lemmas():
-            if lemma.key() in lst_lemma_keys:
-                continue
+            if distinct:
+                if lemma.key() in lst_lemma_keys:
+                    continue
             lst_lemma_keys.append(lemma.key())
             lst_weights.append(weight)
 
