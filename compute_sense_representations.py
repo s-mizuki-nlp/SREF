@@ -139,7 +139,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
 
     dict_lemma_vectors = {lemma_key:basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys}
 
-    if inference_strategy in ("synset-then-lemma", "synset"):
+    if inference_strategy in ("synset-then-lemma", "synset", "synset-and-lemma"):
         # mat_x: all lemma embeddings which relates to the target synset.
         lst_related_lemma_vectors = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
         mat_s = np.stack(lst_related_lemma_vectors).squeeze()
@@ -157,14 +157,16 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                     dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_l, method=posterior_parameter_estimatnion)
                 else:
                     dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+
             elif inference_strategy == "synset":
                 dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+
             elif inference_strategy == "synset-and-lemma":
                 # except the effect of prior, this setup is identical to SREF algorithm.
                 # append target lemma embedding with sample weights = 1.0
                 lst_embs = [basic_lemma_embeddings[lemma_key]] + lst_related_lemma_vectors
                 mat_embs = np.stack(lst_embs).squeeze()
-                lst_weights = None if lst_weights is None else [1.0] + lst_related_lemma_weights
+                lst_weights = None if lst_related_lemma_weights is None else [1.0] + lst_related_lemma_weights
                 p_posterior_s_plus_l = prior_distribution.posterior(mat_obs=mat_embs, sample_weights=lst_weights)
                 dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_plus_l, method=posterior_parameter_estimatnion)
 
