@@ -34,9 +34,8 @@ def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: 
         distance = distance if distance else 5
         weight = 1 / (1 + distance)
         for lemma in synset_rel.lemmas():
-            if distinct:
-                if lemma.key() in lst_lemma_keys:
-                    continue
+            if distinct and (lemma.key() in lst_lemma_keys):
+                continue
             lst_lemma_keys.append(lemma.key())
             lst_weights.append(weight)
 
@@ -129,12 +128,12 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
     # collect basic lemma embeddings that are used for updating synset-level prob. dist. (=prior of lemma-level prob. dist.).
     if semantic_relation == "synonym":
         lst_related_lemma_keys = lst_lemma_keys_in_target_synset
-        lst_weights = None
+        lst_related_lemma_weights = None
     elif semantic_relation == "all-relations":
-        lst_related_lemma_keys, lst_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
+        lst_related_lemma_keys, lst_related_lemma_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
     elif semantic_relation == "all-relations-wo-weight":
         lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
-        lst_weights = None
+        lst_related_lemma_weights = None
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
 
@@ -142,11 +141,11 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
 
     if inference_strategy in ("synset-then-lemma", "synset"):
         # mat_x: all lemma embeddings which relates to the target synset.
-        lst_lemma_vectors = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
-        mat_s = np.stack(lst_lemma_vectors).squeeze()
+        lst_related_lemma_vectors = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
+        mat_s = np.stack(lst_related_lemma_vectors).squeeze()
 
         # synset-level posterior
-        p_posterior_s = prior_distribution.posterior(mat_obs=mat_s, sample_weights=lst_weights)
+        p_posterior_s = prior_distribution.posterior(mat_obs=mat_s, sample_weights=lst_related_lemma_weights)
 
         for lemma_key in lst_lemma_keys_in_target_synset:
             if inference_strategy == "synset-then-lemma":
@@ -160,6 +159,14 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                     dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
             elif inference_strategy == "synset":
                 dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+            elif inference_strategy == "synset-and-lemma":
+                # except the effect of prior, this setup is identical to SREF algorithm.
+                # append target lemma embedding with sample weights = 1.0
+                lst_embs = [basic_lemma_embeddings[lemma_key]] + lst_related_lemma_vectors
+                mat_embs = np.stack(lst_embs).squeeze()
+                lst_weights = None if lst_weights is None else [1.0] + lst_related_lemma_weights
+                p_posterior_s_plus_l = prior_distribution.posterior(mat_obs=mat_embs, sample_weights=lst_weights)
+                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_plus_l, method=posterior_parameter_estimatnion)
 
     elif inference_strategy == "lemma":
         p_posterior_s = None
@@ -187,7 +194,7 @@ def _parse_args():
     parser.add_argument("--input_path", type=str, help="input path of basic lemma embeddings.", required=True)
     parser.add_argument("--normalize_lemma_embeddings", action="store_true", help="normalize basic lemma embeddings before inference.")
     parser.add_argument('--inference_strategy', type=str, required=True,
-                        choices=["synset-then-lemma", "synset", "lemma",], help='methodologies that will be applied to sense embeddings.')
+                        choices=["synset-then-lemma", "synset-and-lemma", "synset", "lemma"], help='methodologies that will be applied to sense embeddings.')
     parser.add_argument('--semantic_relation', type=str, required=True,
                         choices=["synonym", "all-relations", "all-relations-wo-weight"],
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
