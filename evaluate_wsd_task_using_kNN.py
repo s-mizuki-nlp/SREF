@@ -1,6 +1,7 @@
 import sys, io, os
 import logging
 import argparse
+from pprint import pprint
 from functools import lru_cache
 from collections import defaultdict
 from collections import Counter
@@ -208,15 +209,13 @@ if __name__ == '__main__':
     logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.try_again}")
     logging.info(f"Loading sense representation from: {args.sense_representation_path}")
 
-    with io.open(args.sense_representation_path, mode='rb') as ifs:
-        emb_wn = pickle.load(ifs)
-    logging.info('loaded sense representation.')
-
     logging.info("initialize sense representation model.")
     model = SenseRepresentationModel(path=args.sense_representation_path,
                                      repr_type=args.sense_representation_type,
                                      default_similarity_metric=args.similarity_metric,
                                      TEST_MODE=args.sanity_check)
+    logging.info("sense representation model summary is as follows.")
+    pprint(model.metadata)
 
     """
     Initialize various counters for calculating supplementary metrics for ALL dataset.

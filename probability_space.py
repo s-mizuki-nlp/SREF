@@ -29,6 +29,7 @@ class SenseRepresentationModel(object):
             object = pickle.load(ifs)
             self._dict_lemma_sense_representations = object["lemma"]
             self._dict_synset_sense_representations = object["synset"]
+            self._metadata = object.get("meta", {})
 
         self._similarity_metric = default_similarity_metric
 
@@ -42,6 +43,13 @@ class SenseRepresentationModel(object):
             self._dict_synset_taxonomy = extract_synset_taxonomy(target_part_of_speech=["n","v"], include_instance_of_lemmas=True)
 
         self.load_aux_senses()
+
+    @property
+    def metadata(self):
+        dict_ret = self._metadata
+        dict_ret["repr_type"] = self._repr_type
+        dict_ret["default_similarity_metric"] = self._similarity_metric
+        return dict_ret
 
     @property
     def lemma_keys(self):
