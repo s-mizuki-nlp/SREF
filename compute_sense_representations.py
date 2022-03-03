@@ -221,12 +221,16 @@ def _parse_args():
     path_output = args.out_path
     if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
+        if args.posterior_inference_method == "known_variance":
+            _kappa = _nu_minus_dof = float("nan")
+        else:
+            _kappa, _nu_minus_dof = args.kappa, args.nu_minus_dof
         path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                          strategy=args.inference_strategy,
                                          relation=args.semantic_relation,
                                          posterior_inference_method=args.posterior_inference_method,
-                                         kappa=args.kappa,
-                                         nu_minus_dof=args.nu_minus_dof,
+                                         kappa=_kappa,
+                                         nu_minus_dof=_nu_minus_dof,
                                          lemma_embeddings_name=lemma_embeddings_name)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
     logging.info(f"result will be saved as: {path_output}")
