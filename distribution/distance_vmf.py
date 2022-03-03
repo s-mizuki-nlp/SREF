@@ -18,19 +18,19 @@ def expected_likelihood_vmf(p_x: "vonMisesFisher", p_y: "vonMisesFisher", log: b
     mu_y, k_y = _extract_params(p_y)
 
     kappa_xy = np.sqrt(k_x**2+k_y**2+2*k_x*k_y*np.dot(mu_x,mu_y))
-    norm_x = p_x.normalization_term
-    norm_y = p_y.normalization_term
-    norm_xy = vonMisesFisher.calc_normalization_term(n_dim, kappa_xy)
+    log_norm_x = p_x.log_normalization_term
+    log_norm_y = p_y.log_normalization_term
+    log_norm_xy = vonMisesFisher.calc_log_normalization_term(n_dim, kappa_xy)
 
     # ELK = c_p(dim,\kappa_{x})*c_p(dim,\kappa_{y} / c_p(dim,\kappa_{xy})
     # c_p = 1 / norm
+    # log_elk = np.log(norm_xy) - (np.log(norm_x) + np.log(norm_y))
+    log_elk = log_norm_xy - (log_norm_x + log_norm_y)
+
     if log:
-        elk = np.log(norm_xy) - (np.log(norm_x) + np.log(norm_y))
+        return log_elk
     else:
-        elk = norm_xy/(norm_x*norm_y)
-
-    return elk
-
+        return np.exp(log_elk)
 
 def kullback_leibler_vmf(p_x: "vonMisesFisher", p_y: "vonMisesFisher", log: bool = True):
     pass
