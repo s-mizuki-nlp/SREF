@@ -20,6 +20,24 @@ tensor = np.ndarray
 
 from .mixture import MultiVariateGaussianMixture, _mvn_isotropic_logpdf, _mvn_isotropic_mahalanobis_dist_sq
 
+# decorator
+def _l2_normalize(function):
+    def wrapper(*args, **kwargs):
+        if "vec_x" in kwargs:
+            vec_x = kwargs.get("vec_x")
+        else:
+            vec_x = args[-1]
+        if vec_x.ndim == 1:
+            vec_x = vec_x / np.linalg.norm(vec_x)
+        elif vec_x.ndim == 2:
+            vec_x = vec_x / np.linalg.norm(vec_x, axis=1, keepdims=True)
+
+        if "vec_x" in kwargs:
+            kwargs["vec_x"] = vec_x
+        else:
+            args = args[:-1] + (vec_x,)
+        return function(*args, **kwargs)
+    return wrapper
 
 class MultiVariateNormal(object):
 
@@ -467,7 +485,8 @@ class vonMisesFisher(object):
         self._mu = vec_mu
         self._kappa = scalar_kappa
         self._validate()
-        self._normalization_term = self.calc_normalization_term(self._n_dim, self._kappa)
+        self._log_normalization_term = self.calc_log_normalization_term(self._n_dim, self._kappa)
+        self._normalization_term = np.exp(self._log_normalization_term)
 
     def _validate(self):
         assert np.abs(1. - np.linalg.norm(self._mu)) < self.__EPS, "`vec_mu` must be unit vector."
@@ -488,21 +507,21 @@ class vonMisesFisher(object):
 
     @property
     def mean(self) -> np.ndarray:
-        coef = _hiv(0.5*self._n_dim, self._kappa)
+        coef = _hiv(self._n_dim/2, self._kappa)
         return self._mu * coef
 
     @property
     def covariance(self) -> np.ndarray:
         cov_mu = np.outer(self._mu, self._mu)
         cov_eye = np.eye(self._n_dim, dtype=np.float)
-        h = _hiv(0.5*self._n_dim, self._kappa)
+        h = _hiv(self._n_dim/2, self._kappa)
         cov = (h/self._kappa)*cov_eye + (1 - self._n_dim*h/self._kappa - h**2)*cov_mu
         return cov
 
     @property
     def entropy(self) -> float:
         # H[p] = c_p(\kappa) - \kappa<\mu, E[x]> = c_p(\kappa) - \kappa * hiv(n_dim/2,\kappa)
-        e = self.log_normalization_term - self._kappa * _hiv(alpha=self._n_dim*0.5, x=self._kappa)
+        e = self.log_normalization_term - self._kappa * _hiv(alpha=self._n_dim/2, x=self._kappa)
         return e
 
     @property
@@ -511,15 +530,20 @@ class vonMisesFisher(object):
 
     @property
     def log_normalization_term(self) -> float:
-        return np.log(self._normalization_term)
+        return self._log_normalization_term
 
     @classmethod
-    def calc_normalization_term(cls, n_dim, kappa) -> float:
-        d_dash = 0.5*n_dim - 1
-        norm = kappa**d_dash
-        denom = np.power(2*np.pi, 0.5*n_dim) * iv(d_dash, kappa)
+    def calc_log_normalization_term(cls, n_dim, kappa) -> float:
+        d_dash = n_dim/2 - 1
+        # num = kappa**d_dash
+        log_num = d_dash * np.log(kappa)
+        # denom = np.power(2*np.pi, n_dim//2) * iv(d_dash, kappa)
+        log_denom = n_dim/2 * np.log(2*np.pi) + np.log(iv(d_dash, kappa))
 
-        return 1./ (norm / denom) # 1 / C_p(\kappa)
+        # norm = 1./ (norm / denom) = 1 / C_p(\kappa)
+        log_norm = log_denom - log_num
+
+        return np.exp(log_norm)
 
     @classmethod
     def random_generation(cls, n_dim: int, mu_range=None, kappa_range=None):
@@ -532,6 +556,78 @@ class vonMisesFisher(object):
         ret = cls(vec_mu, scalar_kappa)
 
         return ret
+
+    @classmethod
+    def fit(cls, mat_obs: matrix, sample_weights: Optional[vector] = None, approx_algorithm: str = "iterative"):
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        # empirical mean
+        if sample_weights is None:
+            vec_x_bar = mat_obs.mean(axis=0)
+        else:
+            # E[X] = \sum_{i}p(x_i)x_i
+            vec_x_bar = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+
+        # covariance factor: \bar{R}
+        r_bar = np.linalg.norm(vec_x_bar)
+
+        # mean vector: \mu
+        vec_mu = vec_x_bar / (r_bar + 1E-15)
+
+        # variance: \kappa
+        if n_obs == 1:
+            kappa = 100.0
+        else:
+            if approx_algorithm == "simple":
+                kappa = cls.approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
+            elif approx_algorithm == "iterative":
+                kappa = cls.approximate_kappa_iterative(r_bar=r_bar, n_dim=n_dim)
+
+        return kappa, vec_mu
+
+    @classmethod
+    def approximate_kappa_simple(cls, r_bar: float, n_dim: int) -> float:
+        """
+        A simple approximation to \kappa [Sra, 2011]
+
+        :param r_bar: L2 norm of the mean vector of observations.
+        :param n_dim: number of dimension.
+        """
+        assert 0 < r_bar < 1, f"r_bar must be between 0 to 1."
+        kappa = r_bar * (n_dim - r_bar**2) / (1.0 - r_bar**2)
+
+        return kappa
+
+    @classmethod
+    def approximate_kappa_iterative(cls, r_bar: float, n_dim: int, n_iter: int = 5) -> float:
+        """
+        more accurate estimation by iterative method
+        ref: https://en.wikipedia.org/wiki/Von_Mises%E2%80%93Fisher_distribution
+
+        :param r_bar: L2 norm of the mean vector of observations.
+        :param n_dim: number of dimension.
+        :param n_iter: number of iteration. DEFAULT: 5
+        """
+
+        def _iterate(r_bar, kappa, n_dim):
+            k_0 = kappa
+            # A_p = \frac{I_{p/2}(\kappa)}{I_{p/2-1}(\kappa)
+            a_p = _hiv(alpha=n_dim/2, x=k_0)
+            k_1 = k_0 - (a_p - r_bar) / (1 - a_p**2 - (n_dim-1)*a_p/k_0)
+            return k_1
+
+        _kappa = cls.approximate_kappa_simple(r_bar, n_dim)
+        for _ in range(n_iter):
+            _kappa = _iterate(r_bar=r_bar, kappa=_kappa, n_dim=n_dim)
+
+        return _kappa
 
     def serialize(self):
         dict_ret = {
@@ -612,11 +708,13 @@ class vonMisesFisher(object):
                 if sampled == size:
                     return vec_result
 
+    @_l2_normalize
     def pdf(self, vec_x: Union[vector, matrix]) -> np.ndarray:
         l = self._likelihood(vec_x)
         norm = self.normalization_term
         return l / norm
 
+    @_l2_normalize
     def logpdf(self, vec_x: Union[vector, matrix]) -> np.ndarray:
         ln_l = self._log_likelihood(vec_x)
         ln_norm = self.log_normalization_term
