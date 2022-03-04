@@ -631,7 +631,7 @@ class vonMisesFisher(object):
 
     def serialize(self):
         dict_ret = {
-            "vec_mu": self.mean,
+            "vec_mu": self.mu,
             "scalar_kappa": self.kappa
         }
         return dict_ret
