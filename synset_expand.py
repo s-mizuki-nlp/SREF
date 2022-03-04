@@ -123,11 +123,13 @@ def gloss_extend(o_sense, emb_strategy) -> List[wn.synset]:
     :return: extended_list_gloss: the bag-of-synset
     """
     extended_list, combine_list = list(), [wn.synset(o_sense)]
-    if emb_strategy == "all-relations":
+    if emb_strategy in ("all-relations", "all-relations-but-hyponymy"):
         relation_list = ['hyponyms', 'part_holonyms', 'part_meronyms', 'member_holonyms', 'antonyms',
                      'member_meronyms', 'entailments', 'attributes', 'similar_tos', 'causes', 'pertainyms',
                      'substance_holonyms', 'substance_meronyms', 'usage_domains', 'also_sees']
         extended_list += morpho_extend([wn.synset(o_sense)])
+        if emb_strategy == "all-relations-but-hyponymy":
+            relation_list.remove("hyponyms")
     elif emb_strategy == "hyponymy":
         relation_list = ['hyponyms']
     else:
@@ -138,9 +140,10 @@ def gloss_extend(o_sense, emb_strategy) -> List[wn.synset]:
         combine_list += get_related([o_sense], relation)
 
     # expand the original sense with in-depth hypernyms (only one branch)
-    for synset in [wn.synset(o_sense)]:
-        # 親語義は原則として1個だが，2個以上の場合もある
-        extended_list += synset.hypernyms()
+    if emb_strategy != "all-relations-but-hyponymy":
+        for synset in [wn.synset(o_sense)]:
+            # 親語義は原則として1個だが，2個以上の場合もある
+            extended_list += synset.hypernyms()
 
     extended_list += combine_list
 

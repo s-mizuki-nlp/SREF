@@ -24,9 +24,11 @@ logging.basicConfig(level=logging.INFO,
                     datefmt='%d-%b-%y %H:%M:%S')
 
 
-def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: str, distinct: bool = False) -> Tuple[List[str], List[int]]:
+def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: str,
+                                                                     semantic_relation: str,
+                                                                     distinct: bool = False) -> Tuple[List[str], List[int]]:
     lst_lemma_keys = []; lst_weights = []
-    lst_related_synsets = gloss_extend(o_sense=synset_id, emb_strategy="all-relations")
+    lst_related_synsets = gloss_extend(o_sense=synset_id, emb_strategy=semantic_relation)
     synset_src = wn.synset(synset_id)
     for synset_rel in lst_related_synsets:
         distance = synset_src.shortest_path_distance(synset_rel)
@@ -49,10 +51,10 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     if semantic_relation == "synonym":
         lst_related_lemma_keys = parent_node.lemma_keys
         lst_weights = None
-    elif semantic_relation == "all-relations":
-        lst_related_lemma_keys, lst_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id)
+    elif semantic_relation in ("all-relations", "all-relations-but-hyponymy"):
+        lst_related_lemma_keys, lst_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id, semantic_relation=semantic_relation)
     elif semantic_relation == "all-relations-wo-weight":
-        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id)
+        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=parent_node.id, semantic_relation=semantic_relation)
         lst_weights = None
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
@@ -129,10 +131,10 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
     if semantic_relation == "synonym":
         lst_related_lemma_keys = lst_lemma_keys_in_target_synset
         lst_related_lemma_weights = None
-    elif semantic_relation == "all-relations":
-        lst_related_lemma_keys, lst_related_lemma_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
+    elif semantic_relation in ("all-relations", "all-relations-but-hyponymy"):
+        lst_related_lemma_keys, lst_related_lemma_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name(), semantic_relation=semantic_relation)
     elif semantic_relation == "all-relations-wo-weight":
-        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name())
+        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset.name(), semantic_relation=semantic_relation)
         lst_related_lemma_weights = None
     else:
         raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
@@ -198,7 +200,7 @@ def _parse_args():
     parser.add_argument('--inference_strategy', type=str, required=True,
                         choices=["synset-then-lemma", "synset-and-lemma", "synset", "lemma"], help='methodologies that will be applied to sense embeddings.')
     parser.add_argument('--semantic_relation', type=str, required=True,
-                        choices=["synonym", "all-relations", "all-relations-wo-weight"],
+                        choices=["synonym", "all-relations", "all-relations-wo-weight", "all-relations-but-hyponymy"],
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
     parser.add_argument("--posterior_inference_method", type=str, required=True, choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
                         help=f"method used for posterior inference.")
