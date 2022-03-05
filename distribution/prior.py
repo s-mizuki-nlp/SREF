@@ -4,14 +4,18 @@ import os, sys, io
 import warnings
 from typing import Optional, Union, List, Any, Tuple, Dict
 import pickle
+
+import mpmath
 import numpy as np
 import scipy as sp
+from scipy import optimize
+from scipy.special import logsumexp
 
 vector = np.array
 matrix = np.ndarray
 tensor = np.ndarray
 
-from .continuous import MultiVariateNormal
+from .continuous import MultiVariateNormal, vonMisesFisher, _hiv
 
 class NormalInverseWishart(object):
 
@@ -227,3 +231,147 @@ class NormalInverseWishart(object):
 
         # return as tuple
         return (vec_mu, vec_diag_cov)
+
+
+class vonMisesFisherConjugatePrior(object):
+
+    __EPS = 1E-5
+    _AVAILABLE_POSTERIOR_INFERENCE_METHOD = ["default", "known_dof"]
+
+    def __init__(self, vec_mu: vector, r_0: float, c: float,
+                 posterior_inference_method: str):
+
+        assert posterior_inference_method in self._AVAILABLE_POSTERIOR_INFERENCE_METHOD, \
+            f"invalid `posterior_inference_method` value. valid values are: {self._AVAILABLE_POSTERIOR_INFERENCE_METHOD}"
+
+        self._n_dim = len(vec_mu)
+        self._posterior_inference_method = posterior_inference_method
+        self._mu = vec_mu
+        self._r_0 = r_0
+        self._c = c
+
+    def mean(self, n_estimation: int = int(1E4)) -> Tuple[float, np.ndarray]:
+        # approximate expectation of \mu and \kappa using the algorithm proposed in [Gabriel and Eduardo, 2005].
+        # for initial value of \mu and \kappa, we use MAP estimator instead of Maximum Likelihood estimator which was employed in original work.
+        kappa_map, vec_mu_map = self.map()
+        kappa_e, vec_mu_e = self._approximate_mean_sir_method(mu_mle=vec_mu_map, kappa_mle=kappa_map, kappa_variance=100.0,
+                                                              m_0=self._mu, r_0=self._r_0, c=self._c, p=self._n_dim, q_c=0.5, n_samples=n_estimation)
+        return kappa_e, vec_mu_e
+
+    def map(self) -> Tuple[float, np.ndarray]:
+        # return approximated MAP estimator
+        vec_mu = self._mu
+        kappa = self._approximate_kappa_map(r_0=self._r_0, c=self._c, p=self._n_dim)
+
+        return (kappa, vec_mu)
+
+    def _approximate_kappa_map(self, r_0: float, c: float, p: Union[int, float]) -> float:
+        """
+        return MAP estimator of \kappa when \mu = \mu_{MAP}
+        """
+        target_value = r_0 / c
+        # objective_function: grad_{\kappa} ln \pi(\kappa|\mu=\mu_{MAP}; c, R_0, m_0)
+        # this function is monotone increasing to \kappa.
+        def objective_function(kappa):
+            return _hiv(alpha=p*0.5, x=kappa) - target_value
+
+        k_min = 0.0
+        k_max = 100.0
+        while True:
+            if objective_function(k_max) < 0:
+                k_max = k_max * 2
+            else:
+                break
+        value_range = (k_min, k_max)
+        k_map = optimize.bisect(objective_function, *value_range)
+
+        return k_map
+
+    def _posterior_default(self, mat_obs: matrix, sample_weights: Optional[vector] = None) -> "vonMisesFisherConjugatePrior":
+        n_obs, n_dim = mat_obs.shape
+        if sample_weights is not None:
+            # \bar{x} = N \sum_{i}{w_i x_i}
+            vec_x_bar = np.sum(n_obs * sample_weights * mat_obs, axis=0)
+        else:
+            vec_x_bar = np.sum(mat_obs, axis=0)
+
+        # formula [2.2] in [Gabriel and Eduardo, 2005]
+        # \hat{\mu} = R_0 \mu_0 + \bar{x}
+        vec_mu_hat = self._r_0 * self._mu + vec_x_bar
+        # R_n = ||\hat{\mu}||
+        r_n = np.linalg.norm(vec_mu_hat)
+        # m_n = \hat{\mu} / R_n
+        vec_m_n = vec_mu_hat / r_n
+        # c_n = c + n
+        c_n = self._c + n_obs
+        return vonMisesFisherConjugatePrior(vec_mu=vec_m_n, r_0=r_n, c=c_n, posterior_inference_method=self._posterior_inference_method)
+
+    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+        assert n_dim == self._n_dim, f"dimensionality mismatch: {n_dim} != {self._n_dim}"
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        if self._posterior_inference_method == "default":
+            # it returns posterior distribution
+            return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
+
+        elif self._posterior_inference_method == "known_dof":
+            # inhrerit own {c, R_0} values to the posterior unless explicitly specified.
+            c_dash = kwargs.get("c", self._c)
+            r_0_dash = kwargs.get("r_0", self._r_0)
+            p_post_temp = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
+            return vonMisesFisherConjugatePrior(vec_mu=p_post_temp._mu, r_0=r_0_dash, c=c_dash, posterior_inference_method=self._posterior_inference_method)
+
+    def _approximate_mean_sir_method(self, mu_mle: vector, kappa_mle: float, kappa_variance: float = 100.0,
+                                     m_0: Optional[vector] = None, r_0: Optional[float] = None, c: Optional[float] = None, p: Optional[float] = None,
+                                     q_c: float = 0.5,
+                                     n_samples: int = int(1E4)) -> Tuple[float, np.ndarray]:
+        # estimate posterior mean of \mu and \kappa using sampling-importance-resampling (SIR) algorithm.
+        # ref: [Gabriel and Eduardo, 2005] A Bayesian Analysis of Directional Data using the von Mises-Fisher Distribution
+
+        @np.vectorize
+        def _log_norm(kappa, c, p):
+            log_num_c_p = (p/2-1)*np.log(kappa)
+            log_denom_c_p = float(mpmath.log(mpmath.besseli(p/2-1, kappa)))
+            log_norm = c * (log_num_c_p - log_denom_c_p)
+            return log_norm
+
+        def _target_log_likelihood(mat_mu, vec_kappa, m_0, r_0, c, p):
+            # r_0 = self._r_0, c = self._c, p = self._n_dim
+            # mat_mu: sampled \mu s from proposal distribution
+            # vec_kappa: sampled \kappa s from proposal distribution
+            # log(exp): \kappa R_n <\mu, m_n>
+            vec_log_exp = vec_kappa * r_0 * mat_mu.dot(m_0)
+            vec_log_norm_inv = _log_norm(kappa=vec_kappa, c=c, p=p)
+            llk = vec_log_norm_inv + vec_log_exp
+            return llk
+
+        # sampling from proposal distributions
+        # \mu proposal: vMF(x; \hat{mu}, Q_c \hat{\kappa} R_n)
+        r_0 = self._r_0 if r_0 is None else r_0
+        vec_mu_samples = vonMisesFisher(vec_mu=mu_mle, scalar_kappa=q_c * kappa_mle * r_0).random(size=n_samples)
+        # \kappa proposal: Gamma(k; mean, var)
+        # mean = \hat{\kappa}, var = 100 or \hat{V[\kappa]}
+        # configure np.random.gamma(shape, scale)
+        k_shape = kappa_mle**2 / kappa_variance
+        theta_scale = kappa_variance / kappa_mle
+        vec_kappa_samples = np.random.gamma(shape=k_shape, scale=theta_scale, size=n_samples)
+
+        # calculate sample weights using log-likelihood on target distribution (=oneself)
+        m_0 = self._mu if m_0 is None else m_0
+        c = self._c if c is None else c
+        p = self._n_dim if p is None else p
+        vec_tgt_llk = _target_log_likelihood(mat_mu=vec_mu_samples, vec_kappa=vec_kappa_samples, m_0=m_0, r_0=r_0, c=c, p=p)
+        # calculate sample weights
+        vec_weights = np.exp( vec_tgt_llk - logsumexp(vec_tgt_llk) )
+        # calculate SIR expectation
+        vec_mu_e = np.sum(vec_mu_samples * vec_weights.reshape(-1,1), axis=0)
+        vec_mu_e = vec_mu_e / np.linalg.norm(vec_mu_e)
+        kappa_e = np.sum(vec_weights * vec_kappa_samples)
+
+        return kappa_e, vec_mu_e
