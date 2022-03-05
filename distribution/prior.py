@@ -250,6 +250,10 @@ class vonMisesFisherConjugatePrior(object):
         self._r_0 = r_0
         self._c = c
 
+    @classmethod
+    def AVAILABLE_POSTERIOR_INFERENCE_METHOD(cls):
+        return cls._AVAILABLE_POSTERIOR_INFERENCE_METHOD
+
     def mean(self, n_estimation: int = int(1E4)) -> Tuple[float, np.ndarray]:
         # approximate expectation of \mu and \kappa using the algorithm proposed in [Gabriel and Eduardo, 2005].
         # for initial value of \mu and \kappa, we use MAP estimator instead of Maximum Likelihood estimator which was employed in original work.
