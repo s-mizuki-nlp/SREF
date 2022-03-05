@@ -7,6 +7,6 @@ python ./compute_sense_representations.py \
 --semantic_relation="all-relations-but-hyponymy" \
 --posterior_inference_method="mean_posterior" \
 --posterior_inference_parameter_estimation="mean" \
---kappa=10.0 \
---nu_minus_dof=10.0 \
+--kappa=1.0 \
+--nu_minus_dof=1.0 \
 --cov=-1.0

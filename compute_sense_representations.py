@@ -12,7 +12,7 @@ from pprint import pprint
 from synset_expand import load_basic_lemma_embeddings, vector_merge, gloss_extend
 from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
 from distribution.continuous import MultiVariateNormal
-from distribution.prior import NormalInverseWishart
+from distribution.prior import NormalInverseWishart, vonMisesFisherConjugatePrior
 
 
 wd = os.path.dirname(__file__)
@@ -115,6 +115,15 @@ def _compute_posterior_multivariate_normal_params(posterior_distribution: "Norma
             "vec_mu": vec_mean,
             "vec_cov": vec_cov_diag
         }
+    return params
+
+def _compute_posterior_vmf_params(posterior_distribution: "vonMisesFisherConjugatePrior") -> Dict[str, np.ndarray]:
+    kappa, vec_mu = posterior_distribution.mean
+    # return as dict
+    params = {
+        "vec_mu": vec_mu,
+        "scalar_kappa": kappa
+    }
     return params
 
 def compute_sense_representations_noun_verb(synset: wn.synset,
