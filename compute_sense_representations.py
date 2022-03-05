@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Tuple, Union, Optional
 import os, sys, io, copy, pickle
 import argparse
 from nltk.corpus import wordnet as wn
@@ -11,7 +11,7 @@ from pprint import pprint
 
 from synset_expand import load_basic_lemma_embeddings, vector_merge, gloss_extend
 from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
-from distribution.continuous import MultiVariateNormal
+from distribution.continuous import MultiVariateNormal, vonMisesFisher
 from distribution.prior import NormalInverseWishart, vonMisesFisherConjugatePrior
 
 
@@ -115,10 +115,22 @@ def _compute_posterior_multivariate_normal_params(posterior_distribution: "Norma
             "vec_mu": vec_mean,
             "vec_cov": vec_cov_diag
         }
+    else:
+        raise ValueError(f"invalid `method` value: valid values are: posterior_predictive,mean")
+
     return params
 
-def _compute_posterior_vmf_params(posterior_distribution: "vonMisesFisherConjugatePrior") -> Dict[str, np.ndarray]:
-    kappa, vec_mu = posterior_distribution.mean
+def _compute_posterior_vmf_params(posterior_distribution: "vonMisesFisherConjugatePrior", method: str,
+                                  mat_obs: Optional[np.ndarray] = None, sample_weights: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
+    if method == "mle":
+        assert mat_obs is not None, f"you must specify `mat_obs` argument."
+        kappa, vec_mu = vonMisesFisher.fit(mat_obs=mat_obs, sample_weights=sample_weights)
+    elif method == "map":
+        kappa, vec_mu = posterior_distribution.map()
+    elif method == "mean":
+        kappa, vec_mu = posterior_distribution.mean(n_estimation=int(1E4))
+    else:
+        raise ValueError(f"invalid `method` value: valid values are: mle,map,mean")
     # return as dict
     params = {
         "vec_mu": vec_mu,
@@ -126,8 +138,15 @@ def _compute_posterior_vmf_params(posterior_distribution: "vonMisesFisherConjuga
     }
     return params
 
+def compute_posterior_params(posterior_distribution: Union["NormalInverseWishart", "vonMisesFisherConjugatePrior"], method: str,
+                             **kwargs) -> Dict[str, np.ndarray]:
+    if isinstance(posterior_distribution, NormalInverseWishart):
+        return _compute_posterior_multivariate_normal_params(posterior_distribution, method)
+    elif isinstance(posterior_distribution, vonMisesFisherConjugatePrior):
+        return _compute_posterior_vmf_params(posterior_distribution, method, **kwargs)
+
 def compute_sense_representations_noun_verb(synset: wn.synset,
-                                            prior_distribution: "NormalInverseWishart",
+                                            prior_distribution: Union["NormalInverseWishart", "vonMisesFisherConjugatePrior"],
                                             posterior_parameter_estimatnion: str,
                                             semantic_relation: str,
                                             basic_lemma_embeddings: Dict[str, np.ndarray],
@@ -161,16 +180,13 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
         for lemma_key in lst_lemma_keys_in_target_synset:
             if inference_strategy == "synset-then-lemma":
                 # compute lemma-level posterior if possible.
-                if lemma_key in dict_lemma_vectors:
-                    # mat_l: (n_obs, n_dim)
-                    mat_l = dict_lemma_vectors[lemma_key]
-                    p_posterior_s_l = p_posterior_s.posterior(mat_obs=mat_l)
-                    dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_l, method=posterior_parameter_estimatnion)
-                else:
-                    dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+                # mat_l: (n_obs, n_dim)
+                mat_l = dict_lemma_vectors[lemma_key]
+                p_posterior_s_l = p_posterior_s.posterior(mat_obs=mat_l)
+                dict_ret[lemma_key] = compute_posterior_params(p_posterior_s_l, method=posterior_parameter_estimatnion, mat_obs=mat_l, sample_weights=None)
 
             elif inference_strategy == "synset":
-                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+                dict_ret[lemma_key] = compute_posterior_params(p_posterior_s, method=posterior_parameter_estimatnion, mat_obs=mat_s, sample_weights=lst_related_lemma_weights)
 
             elif inference_strategy == "synset-and-lemma":
                 # except the effect of prior, this setup is identical to SREF algorithm.
@@ -179,7 +195,7 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
                 mat_embs = np.stack(lst_embs).squeeze()
                 lst_weights = None if lst_related_lemma_weights is None else [1.0] + lst_related_lemma_weights
                 p_posterior_s_plus_l = prior_distribution.posterior(mat_obs=mat_embs, sample_weights=lst_weights)
-                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_s_plus_l, method=posterior_parameter_estimatnion)
+                dict_ret[lemma_key] = compute_posterior_params(p_posterior_s_plus_l, method=posterior_parameter_estimatnion, mat_obs=mat_embs, sample_weights=lst_weights)
 
     elif inference_strategy == "lemma":
         p_posterior_s = None
@@ -189,15 +205,16 @@ def compute_sense_representations_noun_verb(synset: wn.synset,
             if lemma_key in dict_lemma_vectors:
                 mat_l = dict_lemma_vectors[lemma_key]
                 p_posterior_l = prior_distribution.posterior(mat_obs=mat_l)
-                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(p_posterior_l, method=posterior_parameter_estimatnion)
+                dict_ret[lemma_key] = compute_posterior_params(p_posterior_l, method=posterior_parameter_estimatnion, mat_obs=mat_l, sample_weights=None)
             else:
-                dict_ret[lemma_key] = _compute_posterior_multivariate_normal_params(prior_distribution, method=posterior_parameter_estimatnion)
+                dict_ret[lemma_key] = compute_posterior_params(prior_distribution, method=posterior_parameter_estimatnion)
 
     # return lemma-key level repr. and synset level repr (if available).
     if p_posterior_s is None:
         return dict_ret, None
     else:
-        return dict_ret, _compute_posterior_multivariate_normal_params(p_posterior_s, method=posterior_parameter_estimatnion)
+        dict_synset_sense_repr_params = compute_posterior_params(p_posterior_s, method=posterior_parameter_estimatnion, mat_obs=mat_s, sample_weights=lst_related_lemma_weights)
+        return dict_ret, dict_synset_sense_repr_params
 
 
 def _parse_args():
@@ -206,19 +223,23 @@ def _parse_args():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--input_path", type=str, help="input path of basic lemma embeddings.", required=True)
     parser.add_argument("--normalize_lemma_embeddings", action="store_true", help="normalize basic lemma embeddings before inference.")
+    parser.add_argument("--prob_distribution", type=str, required=True, choices=["MultiVariateNormal", "vonMisesFisher"])
     parser.add_argument('--inference_strategy', type=str, required=True,
                         choices=["synset-then-lemma", "synset-and-lemma", "synset", "lemma"], help='methodologies that will be applied to sense embeddings.')
     parser.add_argument('--semantic_relation', type=str, required=True,
                         choices=["synonym", "all-relations", "all-relations-wo-weight", "all-relations-but-hyponymy"],
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
-    parser.add_argument("--posterior_inference_method", type=str, required=True, choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
+    parser.add_argument("--posterior_inference_method", type=str, required=True,
+                        choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD() + vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
                         help=f"method used for posterior inference.")
-    parser.add_argument("--posterior_inference_parameter_estimation", type=str, required=False, default="mean", choices=["posterior_predictive", "mean"],
+    parser.add_argument("--posterior_inference_parameter_estimation", type=str, required=False, default="mean", choices=["posterior_predictive", "mean","mle","map"],
                         help=f"parameter estimation method of posterior inference. DEFAULT: mean")
     parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl')
-    parser.add_argument('--kappa', type=float, required=True, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
-    parser.add_argument('--nu_minus_dof', type=float, required=True, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
+                        default='data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl')
+    parser.add_argument('--kappa', type=float, required=False, default=0, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
+    parser.add_argument('--nu_minus_dof', type=float, required=False,default=0, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
+    parser.add_argument('--c', type=float, required=False, help="c for vMFConjugatePrior distribution. 0 < c. Smaller is less confident for concentration (\kappa).")
+    parser.add_argument('--r_0', type=float, required=False, help="R_0 for vMFConjugatePrior distribution. 0 < R_0. Smaller is less confident for direction (\mu).")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
     args = parser.parse_args()
 
@@ -226,29 +247,53 @@ def _parse_args():
     path = args.input_path
     assert os.path.exists(path), f"invalid path specified: {path}"
 
-    assert args.nu_minus_dof > 0, f"`nu_minus_dof` must be positive: {args.nu_minus_dof}"
+    if args.prob_distribution == "MultiVariateNormal":
+        assert args.nu_minus_dof > 0, f"`nu_minus_dof` must be positive: {args.nu_minus_dof}"
+        assert args.kappa > 0, f"`kappa` must be positive: {args.kappa}"
+        assert args.posterior_inference_method in NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
+    elif args.prob_distribution == "vonMisesFisher":
+        assert args.c > 0, f"`c` must be positive: {args.c}"
+        assert args.r_0 > 0, f"`r_0` must be positive: {args.r_0}"
+        assert args.normalize_lemma_embeddings is True, f"`normalize_lemma_embeddings` must be enabled."
+        assert args.posterior_inference_method in vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
 
     # output
     path_output = args.out_path
+    if path_output is None:
+        if args.prob_distribution == "MultiVariateNormal":
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
+        elif args.prob_distribution == "vonMisesFisher":
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
+
     if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
-        if args.posterior_inference_method == "known_variance":
-            _kappa = _nu_minus_dof = float("nan")
-        else:
-            _kappa, _nu_minus_dof = args.kappa, args.nu_minus_dof
-        path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
-                                         strategy=args.inference_strategy,
-                                         relation=args.semantic_relation,
-                                         posterior_inference_method=args.posterior_inference_method,
-                                         kappa=_kappa,
-                                         nu_minus_dof=_nu_minus_dof,
-                                         lemma_embeddings_name=lemma_embeddings_name)
+        if args.prob_distribution == "MultiVariateNormal":
+            if args.posterior_inference_method == "known_variance":
+                _kappa = _nu_minus_dof = float("nan")
+            else:
+                _kappa, _nu_minus_dof = args.kappa, args.nu_minus_dof
+            path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
+                                             strategy=args.inference_strategy,
+                                             relation=args.semantic_relation,
+                                             posterior_inference_method=args.posterior_inference_method,
+                                             kappa=_kappa,
+                                             nu_minus_dof=_nu_minus_dof,
+                                             lemma_embeddings_name=lemma_embeddings_name,
+                                             prob_distribution=args.prob_distribution)
+        elif args.prob_distribution == "vonMisesFisher":
+            path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
+                                             strategy=args.inference_strategy,
+                                             relation=args.semantic_relation,
+                                             posterior_inference_method=args.posterior_inference_method,
+                                             c=args.c,
+                                             r_0=args.r_0,
+                                             lemma_embeddings_name=lemma_embeddings_name,
+                                             prob_distribution=args.prob_distribution)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
     logging.info(f"result will be saved as: {path_output}")
     args.out_path = path_output
 
     return args
-
 
 if __name__ == "__main__":
 
@@ -272,34 +317,43 @@ if __name__ == "__main__":
     dict_synset_taxonomy = extract_synset_taxonomy(target_part_of_speech=["n","v"], include_instance_of_lemmas=True)
     logging.info(f"done. number of synsets: {len(dict_synset_taxonomy)}")
 
-    # precompute prior distribution params = NIW(\mu, \kappa, \Phi, \nu)
-    # \mu = 0
-    pi_vec_mu = np.zeros(shape=(n_dim,), dtype=np.float)
-    # \kappa = args.kappa
-    pi_kappa = args.kappa
-    # \nu = \nu_{-DoF} + n_dim + 1
-    pi_nu = args.nu_minus_dof + n_dim + 1
-    # \Phi = \V * \nu_{-DoF}
-    if args.cov > 0:
-        # \V = diag(args.cov)
-        vec_cov_diag = np.ones(shape=(n_dim,), dtype=np.float) * args.cov
-    else:
-        # \V = diag(COV[X])
-        mat_x = np.stack(dict_lemma_key_embeddings.values())
-        vec_cov_diag = np.mean( (mat_x - mat_x.mean(axis=0))**2, axis=0)
-        scalar_cov = np.exp(np.mean(np.log(vec_cov_diag + 1E-15)))
-        logging.info(f"empirical variance(geo. mean): {scalar_cov:1.5f}")
-    vec_phi_diag = vec_cov_diag * args.nu_minus_dof
-    scalar_phi_diag = np.exp(np.mean(np.log(vec_phi_diag + 1E-15)))
-    logging.info(f"kappa = {pi_kappa:1.4f}, delta_nu = {args.nu_minus_dof:1.4f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
+    # precompute prior distribution params
+    if args.prob_distribution == "MultiVariateNormal":
+        # For NIW(\mu, \kappa, \Phi, \nu)
+        # \mu = 0
+        pi_vec_mu = np.zeros(shape=(n_dim,), dtype=np.float)
+        # \kappa = args.kappa
+        pi_kappa = args.kappa
+        # \nu = \nu_{-DoF} + n_dim + 1
+        pi_nu = args.nu_minus_dof + n_dim + 1
+        # \Phi = \V * \nu_{-DoF}
+        if args.cov > 0:
+            # \V = diag(args.cov)
+            vec_cov_diag = np.ones(shape=(n_dim,), dtype=np.float) * args.cov
+        else:
+            # \V = diag(COV[X])
+            mat_x = np.stack(dict_lemma_key_embeddings.values())
+            vec_cov_diag = np.mean( (mat_x - mat_x.mean(axis=0))**2, axis=0)
+            scalar_cov = np.exp(np.mean(np.log(vec_cov_diag + 1E-15)))
+            logging.info(f"empirical variance(geo. mean): {scalar_cov:1.5f}")
+        vec_phi_diag = vec_cov_diag * args.nu_minus_dof
+        scalar_phi_diag = np.exp(np.mean(np.log(vec_phi_diag + 1E-15)))
+        logging.info(f"kappa = {pi_kappa:1.4f}, delta_nu = {args.nu_minus_dof:1.4f}, Phi(geo. mean) = {scalar_phi_diag:1.5f}")
+        root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu,
+                                      posterior_inference_method=args.posterior_inference_method)
+
+    elif args.prob_distribution == "vonMisesFisher":
+        c = args.c
+        r_0 = args.r_0
+        m_0 = np.zeros(shape=(n_dim,), dtype=np.float) # vague prior
+        logging.info(f"c = {c:1.1f}, R_0 = {r_0:1.1f}, m_0 = zeroes({n_dim})")
+        root_prior = vonMisesFisherConjugatePrior(vec_mu=m_0, c=c, r_0=r_0, posterior_inference_method=args.posterior_inference_method)
 
     # compute synset prior distributions
     # [warning] it assigns .prior attribute for each node.
     ROOT_SYNSETS = ["entity.n.01"] # noun
     for node in dict_synset_taxonomy["verb_dummy_root.v.01"].children: # verb
         ROOT_SYNSETS.append(node.id)
-    root_prior = NormalInverseWishart(vec_mu=pi_vec_mu, kappa=pi_kappa, vec_phi=vec_phi_diag, nu=pi_nu,
-                                      posterior_inference_method=args.posterior_inference_method)
     for root_synset_id in ROOT_SYNSETS:
         logging.info(f"precompute synset priors. root: {root_synset_id}")
         root_node = dict_synset_taxonomy[root_synset_id]
