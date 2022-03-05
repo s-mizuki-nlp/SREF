@@ -594,38 +594,39 @@ class vonMisesFisher(object):
 
         return kappa, vec_mu
 
-    @classmethod
-    def _fit_kappa_variance(cls, mat_obs: matrix, sample_weights: Optional[vector] = None):
-        if mat_obs.ndim == 1:
-            mat_obs = mat_obs.reshape((1, -1))
-        n_obs, n_dim = mat_obs.shape
-
-        if n_obs < 2:
-            return 0.0
-
-        if sample_weights is not None:
-            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
-            # normalize sample weights as the sum equals to 1.0
-            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
-
-        if sample_weights is None:
-            vec_x_bar = mat_obs.mean(axis=0)
-        else:
-            # E[X] = \sum_{i}p(x_i)x_i
-            vec_x_bar = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
-
-        # compute leave-one-out average over n_obs samples.
-        # \bar{x}_{-j} = \frac{n \bar{x} - x_j}{n-1}
-        mat_x_bar_loo = (n_obs * vec_x_bar - mat_obs) / (n_obs - 1)
-
-        # covariance factor: \bar{R_{-j}}
-        vec_r_bar = np.linalg.norm(mat_x_bar_loo, axis=-1)
-        # estimated \kappa_{-j}
-        vec_kappa_loo = cls.approximate_kappa_simple(r_bar=vec_r_bar, n_dim=n_dim)
-        # estimate variance
-        var_kappa = np.var(vec_kappa_loo)
-
-        return var_kappa
+    # note: we found that estimation of the variance of \kappa_{mle} is almost useless.
+    # @classmethod
+    # def _fit_kappa_variance(cls, mat_obs: matrix, sample_weights: Optional[vector] = None):
+    #     if mat_obs.ndim == 1:
+    #         mat_obs = mat_obs.reshape((1, -1))
+    #     n_obs, n_dim = mat_obs.shape
+    #
+    #     if n_obs < 2:
+    #         return 0.0
+    #
+    #     if sample_weights is not None:
+    #         assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+    #         # normalize sample weights as the sum equals to 1.0
+    #         sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+    #
+    #     if sample_weights is None:
+    #         vec_x_bar = mat_obs.mean(axis=0)
+    #     else:
+    #         # E[X] = \sum_{i}p(x_i)x_i
+    #         vec_x_bar = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+    #
+    #     # compute leave-one-out average over n_obs samples.
+    #     # \bar{x}_{-j} = \frac{n \bar{x} - x_j}{n-1}
+    #     mat_x_bar_loo = (n_obs * vec_x_bar - mat_obs) / (n_obs - 1)
+    #
+    #     # covariance factor: \bar{R_{-j}}
+    #     vec_r_bar = np.linalg.norm(mat_x_bar_loo, axis=-1)
+    #     # estimated \kappa_{-j}
+    #     vec_kappa_loo = cls.approximate_kappa_simple(r_bar=vec_r_bar, n_dim=n_dim)
+    #     # estimate variance
+    #     var_kappa = np.var(vec_kappa_loo)
+    #
+    #     return var_kappa
 
     @classmethod
     def approximate_kappa_simple(cls, r_bar: float, n_dim: int) -> float:
