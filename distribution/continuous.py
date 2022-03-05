@@ -13,6 +13,7 @@ from scipy.spatial.distance import mahalanobis
 from scipy.special import logsumexp
 from scipy import optimize
 from matplotlib import pyplot as plt
+import mpmath
 
 vector = np.array
 matrix = np.ndarray
@@ -474,7 +475,9 @@ class MultiVariateNormal(object):
 def _hiv(alpha, x):
     if x == 0.:
         return 0.
-    return iv(alpha, x) / iv(alpha-1, x)
+    r = mpmath.besseli(alpha, x) / mpmath.besseli(alpha-1, x)
+    return float(r)
+
 
 class vonMisesFisher(object):
 
@@ -486,7 +489,6 @@ class vonMisesFisher(object):
         self._kappa = scalar_kappa
         self._validate()
         self._log_normalization_term = self.calc_log_normalization_term(self._n_dim, self._kappa)
-        self._normalization_term = np.exp(self._log_normalization_term)
 
     def _validate(self):
         assert np.abs(1. - np.linalg.norm(self._mu)) < self.__EPS, "`vec_mu` must be unit vector."
@@ -511,6 +513,10 @@ class vonMisesFisher(object):
         return self._mu * coef
 
     @property
+    def normalized_mean(self) -> np.ndarray:
+        return self._mu
+
+    @property
     def covariance(self) -> np.ndarray:
         cov_mu = np.outer(self._mu, self._mu)
         cov_eye = np.eye(self._n_dim, dtype=np.float)
@@ -525,10 +531,6 @@ class vonMisesFisher(object):
         return e
 
     @property
-    def normalization_term(self) -> float:
-        return self._normalization_term
-
-    @property
     def log_normalization_term(self) -> float:
         return self._log_normalization_term
 
@@ -538,12 +540,12 @@ class vonMisesFisher(object):
         # num = kappa**d_dash
         log_num = d_dash * np.log(kappa)
         # denom = np.power(2*np.pi, n_dim//2) * iv(d_dash, kappa)
-        log_denom = n_dim/2 * np.log(2*np.pi) + np.log(iv(d_dash, kappa))
+        log_denom = n_dim/2 * np.log(2*np.pi) + float(mpmath.log(mpmath.besseli(d_dash, kappa)))
 
         # norm = 1./ (norm / denom) = 1 / C_p(\kappa)
         log_norm = log_denom - log_num
 
-        return np.exp(log_norm)
+        return log_norm
 
     @classmethod
     def random_generation(cls, n_dim: int, mu_range=None, kappa_range=None):
@@ -593,6 +595,39 @@ class vonMisesFisher(object):
         return kappa, vec_mu
 
     @classmethod
+    def _fit_kappa_variance(cls, mat_obs: matrix, sample_weights: Optional[vector] = None):
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+
+        if n_obs < 2:
+            return 0.0
+
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        if sample_weights is None:
+            vec_x_bar = mat_obs.mean(axis=0)
+        else:
+            # E[X] = \sum_{i}p(x_i)x_i
+            vec_x_bar = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+
+        # compute leave-one-out average over n_obs samples.
+        # \bar{x}_{-j} = \frac{n \bar{x} - x_j}{n-1}
+        mat_x_bar_loo = (n_obs * vec_x_bar - mat_obs) / (n_obs - 1)
+
+        # covariance factor: \bar{R_{-j}}
+        vec_r_bar = np.linalg.norm(mat_x_bar_loo, axis=-1)
+        # estimated \kappa_{-j}
+        vec_kappa_loo = cls.approximate_kappa_simple(r_bar=vec_r_bar, n_dim=n_dim)
+        # estimate variance
+        var_kappa = np.var(vec_kappa_loo)
+
+        return var_kappa
+
+    @classmethod
     def approximate_kappa_simple(cls, r_bar: float, n_dim: int) -> float:
         """
         A simple approximation to \kappa [Sra, 2011]
@@ -600,7 +635,8 @@ class vonMisesFisher(object):
         :param r_bar: L2 norm of the mean vector of observations.
         :param n_dim: number of dimension.
         """
-        assert 0 < r_bar < 1, f"r_bar must be between 0 to 1."
+        if isinstance(r_bar, float):
+            assert 0 < r_bar < 1, f"r_bar must be between 0 to 1."
         kappa = r_bar * (n_dim - r_bar**2) / (1.0 - r_bar**2)
 
         return kappa
