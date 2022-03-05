@@ -295,7 +295,7 @@ class vonMisesFisherConjugatePrior(object):
         n_obs, n_dim = mat_obs.shape
         if sample_weights is not None:
             # \bar{x} = N \sum_{i}{w_i x_i}
-            vec_x_bar = np.sum(n_obs * sample_weights * mat_obs, axis=0)
+            vec_x_bar = np.sum(n_obs * sample_weights.reshape(-1,1) * mat_obs, axis=0)
         else:
             vec_x_bar = np.sum(mat_obs, axis=0)
 

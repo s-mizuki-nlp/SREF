@@ -234,8 +234,7 @@ def _parse_args():
                         help=f"method used for posterior inference.")
     parser.add_argument("--posterior_inference_parameter_estimation", type=str, required=False, default="mean", choices=["posterior_predictive", "mean","mle","map"],
                         help=f"parameter estimation method of posterior inference. DEFAULT: mean")
-    parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False,
-                        default='data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl')
+    parser.add_argument('--out_path', type=str, help='output path of sense embeddings.', required=False, default=None)
     parser.add_argument('--kappa', type=float, required=False, default=0, help="\kappa for NIW distribution. 0 < \kappa << 1. Smaller is less confident for mean.")
     parser.add_argument('--nu_minus_dof', type=float, required=False,default=0, help="\nu - n_dim - 1 for NIW distribution. 0 < \nu_{-DoF}. Smaller is less confident for variance.")
     parser.add_argument('--c', type=float, required=False, help="c for vMFConjugatePrior distribution. 0 < c. Smaller is less confident for concentration (\kappa).")
