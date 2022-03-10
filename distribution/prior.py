@@ -3,11 +3,9 @@
 import os, sys, io
 import warnings
 from typing import Optional, Union, List, Any, Tuple, Dict
-import pickle
 
 import mpmath
 import numpy as np
-import scipy as sp
 from scipy import optimize
 from scipy.special import logsumexp
 
