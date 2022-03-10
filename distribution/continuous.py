@@ -26,6 +26,8 @@ def _l2_normalize(function):
     def wrapper(*args, **kwargs):
         if "vec_x" in kwargs:
             vec_x = kwargs.get("vec_x")
+        elif "mat_obs" in kwargs:
+            vec_x = kwargs.get("mat_obs")
         else:
             vec_x = args[-1]
         if vec_x.ndim == 1:
@@ -35,6 +37,8 @@ def _l2_normalize(function):
 
         if "vec_x" in kwargs:
             kwargs["vec_x"] = vec_x
+        elif "mat_obs" in kwargs:
+            kwargs["mat_obs"] = vec_x
         else:
             args = args[:-1] + (vec_x,)
         return function(*args, **kwargs)
@@ -560,6 +564,7 @@ class vonMisesFisher(object):
         return ret
 
     @classmethod
+    @_l2_normalize
     def fit(cls, mat_obs: matrix, sample_weights: Optional[vector] = None, approx_algorithm: str = "iterative"):
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
@@ -588,9 +593,9 @@ class vonMisesFisher(object):
             kappa = 100.0
         else:
             if approx_algorithm == "simple":
-                kappa = cls.approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
+                kappa = vonMisesFisher.approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
             elif approx_algorithm == "iterative":
-                kappa = cls.approximate_kappa_iterative(r_bar=r_bar, n_dim=n_dim)
+                kappa = vonMisesFisher.approximate_kappa_iterative(r_bar=r_bar, n_dim=n_dim)
 
         return kappa, vec_mu
 

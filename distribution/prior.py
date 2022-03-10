@@ -15,7 +15,7 @@ vector = np.array
 matrix = np.ndarray
 tensor = np.ndarray
 
-from .continuous import MultiVariateNormal, vonMisesFisher, _hiv
+from .continuous import MultiVariateNormal, vonMisesFisher, _hiv, _l2_normalize
 
 class NormalInverseWishart(object):
 
@@ -310,6 +310,7 @@ class vonMisesFisherConjugatePrior(object):
         c_n = self._c + n_obs
         return vonMisesFisherConjugatePrior(vec_mu=vec_m_n, r_0=r_n, c=c_n, posterior_inference_method=self._posterior_inference_method)
 
+    @_l2_normalize
     def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
