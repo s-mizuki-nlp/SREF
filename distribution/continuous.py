@@ -20,6 +20,7 @@ matrix = np.ndarray
 tensor = np.ndarray
 
 from .mixture import MultiVariateGaussianMixture, _mvn_isotropic_logpdf, _mvn_isotropic_mahalanobis_dist_sq
+from .utils import l2_normalize
 
 # decorator
 def _l2_normalize(function):
@@ -30,10 +31,8 @@ def _l2_normalize(function):
             vec_x = kwargs.get("mat_obs")
         else:
             vec_x = args[-1]
-        if vec_x.ndim == 1:
-            vec_x = vec_x / np.linalg.norm(vec_x)
-        elif vec_x.ndim == 2:
-            vec_x = vec_x / np.linalg.norm(vec_x, axis=1, keepdims=True)
+
+        vec_x = l2_normalize(vec_x)
 
         if "vec_x" in kwargs:
             kwargs["vec_x"] = vec_x
