@@ -253,7 +253,7 @@ def _parse_args():
     elif args.prob_distribution == "vonMisesFisher":
         assert args.c > 0, f"`c` must be positive: {args.c}"
         assert args.r_0 > 0, f"`r_0` must be positive: {args.r_0}"
-        assert args.normalize_lemma_embeddings is True, f"`normalize_lemma_embeddings` must be enabled."
+        # assert args.normalize_lemma_embeddings is True, f"`normalize_lemma_embeddings` must be enabled."
         assert args.posterior_inference_method in vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
 
     # output
