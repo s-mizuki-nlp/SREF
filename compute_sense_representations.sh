@@ -23,6 +23,6 @@ python ./compute_sense_representations.py \
 --inference_strategy="synset-and-lemma" \
 --semantic_relation="all-relations" \
 --posterior_inference_method="default" \
---posterior_inference_parameter_estimation="mean" \
+--posterior_inference_parameter_estimation="map" \
 --c=1.0 \
 --r_0=1.0

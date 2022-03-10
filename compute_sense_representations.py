@@ -260,9 +260,9 @@ def _parse_args():
     path_output = args.out_path
     if path_output is None:
         if args.prob_distribution == "MultiVariateNormal":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
         elif args.prob_distribution == "vonMisesFisher":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
 
     if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
@@ -275,15 +275,18 @@ def _parse_args():
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
                                              posterior_inference_method=args.posterior_inference_method,
+                                             posterior_inference_parameter_estimation=args.posterior_inference_parameter_estimation,
                                              kappa=_kappa,
                                              nu_minus_dof=_nu_minus_dof,
                                              lemma_embeddings_name=lemma_embeddings_name,
                                              prob_distribution=args.prob_distribution)
         elif args.prob_distribution == "vonMisesFisher":
+            _posterior_inference_method = "na" if args.posterior_inference_parameter_estimation == "mle" else args.posterior_inference_method
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
-                                             posterior_inference_method=args.posterior_inference_method,
+                                             posterior_inference_method=_posterior_inference_method,
+                                             posterior_inference_parameter_estimation=args.posterior_inference_parameter_estimation,
                                              c=args.c,
                                              r_0=args.r_0,
                                              lemma_embeddings_name=lemma_embeddings_name,
