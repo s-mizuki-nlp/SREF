@@ -473,6 +473,42 @@ class MultiVariateNormal(object):
             else:
                 return MultiVariateNormal(vec_mu=mu_norm, vec_cov=cov_norm)
 
+    @classmethod
+    def fit(cls, mat_obs: matrix, sample_weights: Optional[vector] = None,
+                  post_l2_norm: bool = False,
+                  is_cov_diag = True, is_cov_iso = False) -> "MultiVariateNormal":
+
+        assert is_cov_diag == True, f"is_cov_diag=True is available so far."
+
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        # empirical mean
+        if sample_weights is None:
+            vec_mu_e = mat_obs.mean(axis=0)
+        else:
+            # E[X] = \sum_{i}p(x_i)x_i
+            vec_mu_e = np.sum(mat_obs * sample_weights.reshape(n_obs,1), axis=0)
+
+        if post_l2_norm:
+            vec_mu_e = vec_mu_e / (np.linalg.norm(vec_mu_e) + 1E-15)
+
+        # empirical diagonal covariance
+        if n_obs == 1:
+            diag_cov = np.zeros(shape=(n_dim,), dtype=np.float)
+        else:
+            # diag_var = \frac{1}{n}\sum_{i=1}^{n}(x_{ik}-\bar{x_{k}})^2
+            if sample_weights is None:
+                diag_cov = np.mean((mat_obs - vec_mu_e)**2, axis=0)
+            else:
+                diag_cov = np.sum( ((mat_obs - vec_mu_e)**2) * sample_weights.reshape(n_obs,1), axis=0)
+
+        return MultiVariateNormal(vec_mu=vec_mu_e, vec_cov=diag_cov)
 
 # utility functions
 def _hiv(alpha, x):
