@@ -755,7 +755,7 @@ class vonMisesFisher(object):
     @_l2_normalize
     def pdf(self, vec_x: Union[vector, matrix]) -> np.ndarray:
         l = self._likelihood(vec_x)
-        norm = self.normalization_term
+        norm = np.exp(self._log_normalization_term)
         return l / norm
 
     @_l2_normalize
@@ -764,6 +764,7 @@ class vonMisesFisher(object):
         ln_norm = self.log_normalization_term
         return ln_l - ln_norm
 
+    @_l2_normalize
     def unnormalized_logpdf(self, vec_x: Union[vector, matrix]):
         return self._log_likelihood(vec_x)
 
@@ -785,7 +786,7 @@ class vonMisesFisher(object):
 
         return mat_result
 
-    def inter_distance(self, p_y: "MultiVariateNormal", metric: str) -> float:
+    def inter_distance(self, p_y: "vonMisesFisher", metric: str) -> float:
         """
         returns distance between two normal distributions.
         it supports normal distribution with diagonal covariance matrix only.
