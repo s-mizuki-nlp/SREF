@@ -388,9 +388,7 @@ if __name__ == "__main__":
     # compute predictive posterior distributions
     logging.info(f"compute sense representation for all lemmas...")
     dict_lemma_sense_representations = {}; dict_synset_sense_representations = {}
-    # DEBUG
-    # for synset in tqdm(wn.all_synsets()):
-    for synset in tqdm(wn.all_synsets(pos="n")):
+    for synset in tqdm(wn.all_synsets()):
         pos = synset.pos()
         synset_id = synset.name()
         if pos in ["a","r","s"]:
