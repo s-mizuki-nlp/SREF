@@ -87,29 +87,45 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
                                                    basic_lemma_embeddings: Dict[str, np.array],
-                                                   variance: float = 1.0) -> Dict[str, Dict[str, np.ndarray]]:
+                                                   semantic_relation: str,
+                                                   prob_distribution: str) -> Dict[str, Dict[str, np.ndarray]]:
     """
-    It returns predictive posterior (?) Multivariate Normal distribution for each lemma keys which belong to specified synset.
-    mean is equivalent to SREF embedding (=synset relation expansion), variance is 1.0 by default.
+    It returns probability distribution with maximum likelihood estimator for each lemma keys which belong to specified synset.
+    mean is equivalent to SREF embedding (=synset relation expansion).
 
-    :param synset:
-    :param basic_lemma_embeddings:
-    :param variance:
+    :param synset: WordNet synset object.
+    :param basic_lemma_embeddings: dictionary of basic lemma embeddings.
+    :param prob_distribution: probability distribution class name.
+    :param semantic_relation: semantic relation which is used to collect basic lemma embeddings.
     """
     assert synset.pos() in ("a","r","s"), f"invalid synset: {synset.name()}"
     synset_id = synset.name()
 
-    lst_lemma_keys = synset_to_lemma_keys(synset)
-    lemma_vectors = vector_merge(synset_id=synset_id, lst_lemma_keys=lst_lemma_keys,
-                                 lemma_key_embeddings=basic_lemma_embeddings,
-                                 emb_strategy="all-relations")
+    if semantic_relation == "synonym":
+        lst_related_lemma_keys = synset_to_lemma_keys(synset)
+        lst_related_lemma_weights = None
+    elif semantic_relation in ("all-relations", "all-relations-but-hyponymy"):
+        lst_related_lemma_keys, lst_related_lemma_weights = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset_id, semantic_relation=semantic_relation)
+    elif semantic_relation == "all-relations-wo-weight":
+        lst_related_lemma_keys, _ = extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id=synset_id, semantic_relation=semantic_relation)
+        lst_related_lemma_weights = None
+    else:
+        raise NotImplementedError(f"invalid `semantic_relation` value: {semantic_relation}")
+
+    # set prob. dist. MLE parameters as the lemma-level sense representation.
     dict_ret = {}
-    for lemma_key, vector in lemma_vectors.items():
-        # vec_cov = np.full(shape=(len(vector),), fill_value=variance)
-        # p_dist = MultiVariateNormal(vec_mu=np.array(vector), vec_cov=vec_cov)
-        p_dist = MultiVariateNormal(vec_mu=np.array(vector), scalar_cov=variance)
+    lst_related_lemma_vectors = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
+    lst_lemma_keys = synset_to_lemma_keys(synset)
+    for lemma_key in lst_lemma_keys:
+        lst_embs = [basic_lemma_embeddings[lemma_key]] + lst_related_lemma_vectors
+        mat_embs = np.stack(lst_embs).squeeze()
+        lst_weights = None if lst_related_lemma_weights is None else [1.0] + lst_related_lemma_weights
+        if prob_distribution == "MultiVariateNormal":
+            p_dist = MultiVariateNormal.fit(mat_obs=mat_embs, sample_weights=lst_weights)
+        elif prob_distribution == "vonMisesFisher":
+            p_dist = vonMisesFisher.fit(mat_obs=mat_embs, sample_weights=lst_weights)
+
         dict_ret[lemma_key] = p_dist.serialize()
-        del p_dist
 
     return dict_ret
 
@@ -134,7 +150,8 @@ def _compute_posterior_vmf_params(posterior_distribution: "vonMisesFisherConjuga
                                   mat_obs: Optional[np.ndarray] = None, sample_weights: Optional[np.ndarray] = None) -> Dict[str, np.ndarray]:
     if method == "mle":
         assert mat_obs is not None, f"you must specify `mat_obs` argument."
-        kappa, vec_mu = vonMisesFisher.fit(mat_obs=mat_obs, sample_weights=sample_weights)
+        p_dist = vonMisesFisher.fit(mat_obs=mat_obs, sample_weights=sample_weights)
+        kappa, vec_mu = p_dist.kappa, p_dist.mu
     elif method == "map":
         kappa, vec_mu = posterior_distribution.map()
     elif method == "mean":
@@ -295,15 +312,16 @@ def _parse_args():
                                              lemma_embeddings_name=lemma_embeddings_name,
                                              prob_distribution=args.prob_distribution)
         elif args.prob_distribution == "vonMisesFisher":
-            _posterior_inference_method = "na" if args.posterior_inference_parameter_estimation == "mle" else args.posterior_inference_method
-            if args.prior_inference_method == "independent":
+            if args.posterior_inference_parameter_estimation == "mle":
+                _prior_inference_method = _posterior_inference_method = None
+            if (args.prior_inference_method == "independent") or (args.posterior_inference_parameter_estimation == "mle"):
                 _c = _r_0 = float("nan")
             else:
                 _c, _r_0 = args.c, args.r_0
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
-                                             prior_inference_method=args.prior_inference_method,
+                                             prior_inference_method=_prior_inference_method,
                                              posterior_inference_method=_posterior_inference_method,
                                              posterior_inference_parameter_estimation=args.posterior_inference_parameter_estimation,
                                              c=_c,
@@ -393,8 +411,9 @@ if __name__ == "__main__":
         synset_id = synset.name()
         if pos in ["a","r","s"]:
             dict_lemma_reprs = compute_sense_representations_adverb_adjective(synset=synset,
-                                                                              basic_lemma_embeddings=dict_lemma_key_embeddings_for_sref,
-                                                                              variance=1.0)
+                                                                              semantic_relation=args.semantic_relation,
+                                                                              prob_distribution=args.prob_distribution,
+                                                                              basic_lemma_embeddings=dict_lemma_key_embeddings)
         elif pos in ["n","v"]:
             p_synset_prior = dict_synset_taxonomy[synset_id].prior
             dict_lemma_reprs, synset_repr = compute_sense_representations_noun_verb(synset=synset,

@@ -22,8 +22,8 @@ python ./compute_sense_representations.py \
 --normalize_lemma_embeddings \
 --inference_strategy="synset-and-lemma" \
 --semantic_relation="all-relations" \
---prior_inference_method="independent" \
+--prior_inference_method="inherit" \
 --posterior_inference_method="default" \
---posterior_inference_parameter_estimation="map" \
+--posterior_inference_parameter_estimation="mle" \
 --c=10.0 \
---r_0=1.0
+--r_0=9.0
