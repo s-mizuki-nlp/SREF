@@ -8,6 +8,7 @@ from nltk.corpus import wordnet as wn
 import numpy as np
 import logging
 from pprint import pprint
+from tqdm import tqdm
 
 from synset_expand import load_basic_lemma_embeddings, vector_merge, gloss_extend
 from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
@@ -43,7 +44,12 @@ def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: 
 
     return lst_lemma_keys, lst_weights
 
-def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray]):
+def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray],
+                           prior_inference_method: str,
+                           posterior_inference_method: Optional[str] = None):
+    if prior_inference_method == "independent":
+        assert posterior_inference_method is not None, f"you must specify `posterior_inference_method` argument."
+
     # synset prior is the prob. distribution of parent synset.
     prior = parent_node.prior
 
@@ -63,7 +69,10 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     lst_embs = [basic_lemma_embeddings[lemma_key] for lemma_key in lst_related_lemma_keys]
     if len(lst_embs) > 0:
         mat_s = np.stack(lst_embs).squeeze()
-        posterior = prior.posterior(mat_obs=mat_s, sample_weights=lst_weights)
+        if prior_inference_method == "independent":
+            posterior = prior.__class__.fit(mat_obs=mat_s, sample_weights=lst_weights, posterior_inference_method=posterior_inference_method)
+        else:
+            posterior = prior.posterior(mat_obs=mat_s, sample_weights=lst_weights)
     else:
         posterior = copy.deepcopy(prior)
 
@@ -72,7 +81,8 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     # synset prior will be used as the prior distribution of of synset or lemma representation. ref: compute_sense_representations_noun_verb()
     for child_node in parent_node.children:
         child_node.prior = posterior
-        update_children_priors(parent_node=child_node, semantic_relation=semantic_relation, basic_lemma_embeddings=basic_lemma_embeddings)
+        update_children_priors(parent_node=child_node, semantic_relation=semantic_relation, basic_lemma_embeddings=basic_lemma_embeddings,
+                               prior_inference_method=prior_inference_method, posterior_inference_method=posterior_inference_method)
 
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
@@ -229,6 +239,8 @@ def _parse_args():
     parser.add_argument('--semantic_relation', type=str, required=True,
                         choices=["synonym", "all-relations", "all-relations-wo-weight", "all-relations-but-hyponymy"],
                         help="semantic relation which are used to update synset-level probability distribution. `all-relations` is identical to SREF [Wang and Wang, EMNLP2020]")
+    parser.add_argument("--prior_inference_method", type=str, required=True, choices=["inherit", "independent"],
+                        help="method used for synset prior estimation. inherit: use hypernym as conjugate prior. independent: do not use hypernym.")
     parser.add_argument("--posterior_inference_method", type=str, required=True,
                         choices=NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD() + vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(),
                         help=f"method used for posterior inference.")
@@ -250,6 +262,7 @@ def _parse_args():
         assert args.nu_minus_dof > 0, f"`nu_minus_dof` must be positive: {args.nu_minus_dof}"
         assert args.kappa > 0, f"`kappa` must be positive: {args.kappa}"
         assert args.posterior_inference_method in NormalInverseWishart.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
+        assert args.prior_inference_method != "independent", f"`prior_inference_method=independent` is not supported yet."
     elif args.prob_distribution == "vonMisesFisher":
         assert args.c > 0, f"`c` must be positive: {args.c}"
         assert args.r_0 > 0, f"`r_0` must be positive: {args.r_0}"
@@ -260,20 +273,21 @@ def _parse_args():
     path_output = args.out_path
     if path_output is None:
         if args.prob_distribution == "MultiVariateNormal":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
         elif args.prob_distribution == "vonMisesFisher":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
 
     if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
         if args.prob_distribution == "MultiVariateNormal":
-            if args.posterior_inference_method == "known_variance":
+            if (args.posterior_inference_method == "known_variance") or (args.prior_inference_method == "independent"):
                 _kappa = _nu_minus_dof = float("nan")
             else:
                 _kappa, _nu_minus_dof = args.kappa, args.nu_minus_dof
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
+                                             prior_inference_method=args.prior_inference_method,
                                              posterior_inference_method=args.posterior_inference_method,
                                              posterior_inference_parameter_estimation=args.posterior_inference_parameter_estimation,
                                              kappa=_kappa,
@@ -282,13 +296,18 @@ def _parse_args():
                                              prob_distribution=args.prob_distribution)
         elif args.prob_distribution == "vonMisesFisher":
             _posterior_inference_method = "na" if args.posterior_inference_parameter_estimation == "mle" else args.posterior_inference_method
+            if args.prior_inference_method == "independent":
+                _c = _r_0 = float("nan")
+            else:
+                _c, _r_0 = args.c, args.r_0
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
+                                             prior_inference_method=args.prior_inference_method,
                                              posterior_inference_method=_posterior_inference_method,
                                              posterior_inference_parameter_estimation=args.posterior_inference_parameter_estimation,
-                                             c=args.c,
-                                             r_0=args.r_0,
+                                             c=_c,
+                                             r_0=_r_0,
                                              lemma_embeddings_name=lemma_embeddings_name,
                                              prob_distribution=args.prob_distribution)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
@@ -362,12 +381,16 @@ if __name__ == "__main__":
         root_node.prior = root_prior
         update_children_priors(parent_node=root_node,
                                semantic_relation=args.semantic_relation,
-                               basic_lemma_embeddings=dict_lemma_key_embeddings)
+                               basic_lemma_embeddings=dict_lemma_key_embeddings,
+                               prior_inference_method=args.prior_inference_method,
+                               posterior_inference_method=args.posterior_inference_method)
 
     # compute predictive posterior distributions
     logging.info(f"compute sense representation for all lemmas...")
     dict_lemma_sense_representations = {}; dict_synset_sense_representations = {}
-    for synset in wn.all_synsets():
+    # DEBUG
+    # for synset in tqdm(wn.all_synsets()):
+    for synset in tqdm(wn.all_synsets(pos="n")):
         pos = synset.pos()
         synset_id = synset.name()
         if pos in ["a","r","s"]:
