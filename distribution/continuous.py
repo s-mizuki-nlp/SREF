@@ -515,7 +515,10 @@ class MultiVariateNormal(object):
 def _hiv(alpha, x):
     if x == 0.:
         return 0.
-    r = mpmath.besseli(alpha, x) / mpmath.besseli(alpha-1, x)
+    # try:
+    #     r = mpmath.besseli(alpha, x) / mpmath.besseli(alpha-1, x)
+    # except Exception as e:
+    r = mpmath.besseli(alpha, x, maxterms=int(1E6)) / mpmath.besseli(alpha-1, x, maxterms=int(1E6))
     return float(r)
 
 @lru_cache(maxsize=int(1E6))
@@ -669,11 +672,11 @@ class vonMisesFisher(object):
         vec_mu = vec_x_bar / (r_bar + 1E-15)
 
         # variance: \kappa
+        r_bar = round(r_bar, 4)
         if (n_obs == 1) or (r_bar >= 1.0):
             kappa = 10000.0
         else:
             # round r_bar in order to activate cache.
-            r_bar = round(r_bar, 4)
             if approx_algorithm == "simple":
                 kappa = approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
             elif approx_algorithm == "iterative":
