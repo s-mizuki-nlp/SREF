@@ -4,6 +4,7 @@
 import os, sys, io
 import warnings
 from typing import Optional, Union, List, Any, Tuple, Dict
+from functools import lru_cache
 import pickle
 import numpy as np
 import scipy as sp
@@ -517,6 +518,47 @@ def _hiv(alpha, x):
     r = mpmath.besseli(alpha, x) / mpmath.besseli(alpha-1, x)
     return float(r)
 
+@lru_cache(maxsize=int(1E6))
+def approximate_kappa_simple(r_bar: float, n_dim: int) -> float:
+    """
+    A simple approximation to \kappa [Sra, 2011]
+
+    :param r_bar: L2 norm of the mean vector of observations.
+    :param n_dim: number of dimension.
+    """
+    if isinstance(r_bar, float):
+        assert 0 < r_bar < 1, f"r_bar must be between 0 to 1. value: {r_bar:1.4f}"
+    kappa = r_bar * (n_dim - r_bar**2) / (1.0 - r_bar**2)
+
+    return kappa
+
+@lru_cache(maxsize=int(1E6))
+def approximate_kappa_iterative(r_bar: float, n_dim: int, n_iter: int = 5) -> float:
+    """
+    more accurate estimation by iterative method
+    ref: https://en.wikipedia.org/wiki/Von_Mises%E2%80%93Fisher_distribution
+
+    :param r_bar: L2 norm of the mean vector of observations.
+    :param n_dim: number of dimension.
+    :param n_iter: number of iteration. DEFAULT: 5
+    """
+
+    def _iterate(r_bar, kappa, n_dim):
+        k_0 = kappa
+        # A_p = \frac{I_{p/2}(\kappa)}{I_{p/2-1}(\kappa)
+        a_p = _hiv(alpha=n_dim/2, x=k_0)
+        k_1 = k_0 - (a_p - r_bar) / (1 - a_p**2 - (n_dim-1)*a_p/k_0)
+        return k_1
+
+    _kappa = approximate_kappa_simple(r_bar, n_dim)
+    try:
+        for _ in range(n_iter):
+            _kappa = _iterate(r_bar=r_bar, kappa=_kappa, n_dim=n_dim)
+    except Exception as e:
+        pass
+
+    return _kappa
+
 
 class vonMisesFisher(object):
 
@@ -603,7 +645,7 @@ class vonMisesFisher(object):
 
     @classmethod
     @_l2_normalize
-    def fit(cls, mat_obs: matrix, sample_weights: Optional[vector] = None, approx_algorithm: str = "iterative"):
+    def fit(cls, mat_obs: matrix, sample_weights: Optional[vector] = None, approx_algorithm: str = "iterative") -> "vonMisesFisher":
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
         n_obs, n_dim = mat_obs.shape
@@ -630,12 +672,14 @@ class vonMisesFisher(object):
         if n_obs == 1:
             kappa = 100.0
         else:
+            # round r_bar in order to activate cache.
+            r_bar = round(r_bar, 4)
             if approx_algorithm == "simple":
-                kappa = vonMisesFisher.approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
+                kappa = approximate_kappa_simple(r_bar=r_bar, n_dim=n_dim)
             elif approx_algorithm == "iterative":
-                kappa = vonMisesFisher.approximate_kappa_iterative(r_bar=r_bar, n_dim=n_dim)
+                kappa = approximate_kappa_iterative(r_bar=r_bar, n_dim=n_dim)
 
-        return kappa, vec_mu
+        return vonMisesFisher(vec_mu=vec_mu, scalar_kappa=kappa)
 
     # note: we found that estimation of the variance of \kappa_{mle} is almost useless.
     # @classmethod
@@ -670,44 +714,6 @@ class vonMisesFisher(object):
     #     var_kappa = np.var(vec_kappa_loo)
     #
     #     return var_kappa
-
-    @classmethod
-    def approximate_kappa_simple(cls, r_bar: float, n_dim: int) -> float:
-        """
-        A simple approximation to \kappa [Sra, 2011]
-
-        :param r_bar: L2 norm of the mean vector of observations.
-        :param n_dim: number of dimension.
-        """
-        if isinstance(r_bar, float):
-            assert 0 < r_bar < 1, f"r_bar must be between 0 to 1."
-        kappa = r_bar * (n_dim - r_bar**2) / (1.0 - r_bar**2)
-
-        return kappa
-
-    @classmethod
-    def approximate_kappa_iterative(cls, r_bar: float, n_dim: int, n_iter: int = 5) -> float:
-        """
-        more accurate estimation by iterative method
-        ref: https://en.wikipedia.org/wiki/Von_Mises%E2%80%93Fisher_distribution
-
-        :param r_bar: L2 norm of the mean vector of observations.
-        :param n_dim: number of dimension.
-        :param n_iter: number of iteration. DEFAULT: 5
-        """
-
-        def _iterate(r_bar, kappa, n_dim):
-            k_0 = kappa
-            # A_p = \frac{I_{p/2}(\kappa)}{I_{p/2-1}(\kappa)
-            a_p = _hiv(alpha=n_dim/2, x=k_0)
-            k_1 = k_0 - (a_p - r_bar) / (1 - a_p**2 - (n_dim-1)*a_p/k_0)
-            return k_1
-
-        _kappa = cls.approximate_kappa_simple(r_bar, n_dim)
-        for _ in range(n_iter):
-            _kappa = _iterate(r_bar=r_bar, kappa=_kappa, n_dim=n_dim)
-
-        return _kappa
 
     def serialize(self):
         dict_ret = {
