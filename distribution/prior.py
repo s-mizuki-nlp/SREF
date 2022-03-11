@@ -4,6 +4,7 @@ import os, sys, io
 import warnings
 from typing import Optional, Union, List, Any, Tuple, Dict
 
+from functools import lru_cache
 import mpmath
 import numpy as np
 from scipy import optimize
@@ -14,6 +15,27 @@ matrix = np.ndarray
 tensor = np.ndarray
 
 from .continuous import MultiVariateNormal, vonMisesFisher, _hiv, _l2_normalize
+
+
+@lru_cache(maxsize=int(1E6))
+def _optimize_vmf_kappa(target_value: float, p: Union[int, float]) -> float:
+    # objective_function: grad_{\kappa} ln \pi(\kappa|\mu=\mu_{MAP}; c, R_0, m_0)
+    # this function is monotone increasing to \kappa.
+    def objective_function(kappa, p, target):
+        return _hiv(alpha=p*0.5, x=kappa) - target
+
+    k_min = 0.0
+    k_max = 10.0
+    while True:
+        if objective_function(k_max, p, target_value) < 0:
+            k_max = k_max * 10
+        else:
+            break
+    value_range = (k_min, k_max)
+    k_map = optimize.bisect(objective_function, *value_range, xtol=1E-4, rtol=1E-4, args=(p, target_value), maxiter=int(1E4))
+
+    return k_map
+
 
 class NormalInverseWishart(object):
 
@@ -276,20 +298,10 @@ class vonMisesFisherConjugatePrior(object):
         """
         target_value = r_0 / c
         assert target_value < 1.0, f"r_0 / c must be smaller than one."
-        # objective_function: grad_{\kappa} ln \pi(\kappa|\mu=\mu_{MAP}; c, R_0, m_0)
-        # this function is monotone increasing to \kappa.
-        def objective_function(kappa, p, target):
-            return _hiv(alpha=p*0.5, x=kappa) - target
 
-        k_min = 0.0
-        k_max = 10.0
-        while True:
-            if objective_function(k_max, p, target_value) < 0:
-                k_max = k_max * 10
-            else:
-                break
-        value_range = (k_min, k_max)
-        k_map = optimize.bisect(objective_function, *value_range, xtol=1E-2, rtol=1E-2, args=(p, target_value))
+        # round r_0 / c in order to cache the calculation result with the number of significant digits four
+        target_value = round(target_value, 4)
+        k_map = _optimize_vmf_kappa(target_value=target_value, p=p)
 
         # DEBUG
         # print(f"r_0: {r_0:1.1f}, c: {c:1.1f}, r_0/c: {target_value:1.2f}, kappa: {k_map:1.2f}")
@@ -332,9 +344,10 @@ class vonMisesFisherConjugatePrior(object):
         else:
             vec_x_bar = np.sum(mat_obs, axis=0)
 
-        r_0 = np.linalg.norm(vec_x_bar)
+        r_0 = 1.0
         c = n_obs
-        m_0 = vec_x_bar / r_0
+        m_0 = vec_x_bar / np.linalg.norm(vec_x_bar)
+        # print(f"r_0: {r_0:1.1f}, c: {c:1.1f}, r_0/c: {r_0/c:1.2f}")
 
         return vonMisesFisherConjugatePrior(vec_mu=m_0, r_0=r_0, c=c, posterior_inference_method=posterior_inference_method)
 
