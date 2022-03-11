@@ -669,8 +669,8 @@ class vonMisesFisher(object):
         vec_mu = vec_x_bar / (r_bar + 1E-15)
 
         # variance: \kappa
-        if n_obs == 1:
-            kappa = 100.0
+        if (n_obs == 1) or (r_bar >= 1.0):
+            kappa = 10000.0
         else:
             # round r_bar in order to activate cache.
             r_bar = round(r_bar, 4)
