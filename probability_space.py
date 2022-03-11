@@ -16,7 +16,7 @@ prob_dist_types = Union[MultiVariateNormal, vonMisesFisher]
 
 class SenseRepresentationModel(object):
 
-    _AVAILABLE_REPR_TYPES = ("MultiNormal", "vonMises")
+    _AVAILABLE_REPR_TYPES = ("MultiNormal", "vonMisesFisher")
 
     def __init__(self, path: str, repr_type: str, default_similarity_metric: str, TEST_MODE: bool = False):
         assert repr_type in self._AVAILABLE_REPR_TYPES, f"invalid repr_type value: {repr_type}"
@@ -115,7 +115,7 @@ class SenseRepresentationModel(object):
 
         if self._repr_type == "MultiNormal":
             prob_dist = MultiVariateNormal.deserialize(params)
-        elif self._repr_type == "vonMises":
+        elif self._repr_type == "vonMisesFisher":
             prob_dist = vonMisesFisher.deserialize(params)
 
         return prob_dist

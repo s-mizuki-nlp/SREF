@@ -167,8 +167,8 @@ def _parse_args():
                                      formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--bert_host", required=True, help="bert-as-service hostname and ip address. e.g. localhost:5555")
     parser.add_argument('--sense_representation_path', type=str, required=True, help="Path to enhanced lemma-key embeddings.")
-    parser.add_argument('--sense_representation_type', type=str, required=False, choices=["MultiNormal", "vonMises"], default="MultiNormal",
-                        help="probability representation type of the sense representation. DEFAULT: MultiNormal")
+    parser.add_argument('--sense_representation_type', type=str, required=True, choices=["MultiNormal", "vonMisesFisher"],
+                        help="probability representation type of the sense representation.")
     parser.add_argument('--similarity_metric', type=str, choices=["cosine", "l2", "likelihood", "likelihood_wo_norm", "hierarchical"],
                         help="Similarity metric used for nearest neighbor lookup.")
     parser.add_argument('--wsd_fw_path', help='Path to WSD Evaluation Framework', required=False,
