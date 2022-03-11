@@ -168,7 +168,10 @@ class NormalInverseWishart(object):
         return NormalInverseWishart(vec_mu=vec_mu_dash, kappa=_kappa, nu=_nu, vec_phi=diag_phi,
                                     posterior_inference_method=self._posterior_inference_method)
 
-    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "NormalInverseWishart":
+    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, posterior_inference_method: Optional[str] = None, **kwargs) -> "NormalInverseWishart":
+        if posterior_inference_method is None:
+            posterior_inference_method = self._posterior_inference_method
+
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
         n_obs, n_dim = mat_obs.shape
@@ -178,24 +181,24 @@ class NormalInverseWishart(object):
             # normalize sample weights as the sum equals to 1.0
             sample_weights = np.array(sample_weights) / np.sum(sample_weights)
 
-        if self._posterior_inference_method == "default":
+        if posterior_inference_method == "default":
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
-        elif self._posterior_inference_method == "known_dof":
+        elif posterior_inference_method == "known_dof":
             # NIW with known \kappa and \nu. if not given externally, use ourselves.
             # This isn't recommended because covariance will diverge when \kappa or \nu - DoF is small compared to 1.0
             _kappa = kwargs.get("kappa_dash", self._kappa)
             _nu = kwargs.get("nu_dash", self._nu)
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights, kappa_dash=_kappa, nu_dash=_nu)
-        elif self._posterior_inference_method == "known_variance":
+        elif posterior_inference_method == "known_variance":
             return self._posterior_known_variance(mat_obs=mat_obs, sample_weights=sample_weights)
-        elif self._posterior_inference_method in ("predictive_posterior", "mean_posterior"):
-            if self._posterior_inference_method == "predictive_posterior":
+        elif posterior_inference_method in ("predictive_posterior", "mean_posterior"):
+            if posterior_inference_method == "predictive_posterior":
                 # predictive_posterior: returns NIW() with its mean and variance are identical to the "default" posterior predictive.
                 predictive_posterior = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).approx_posterior_predictive()
                 assert predictive_posterior.is_cov_diag, f"posterior predictive covariance is not diagonal."
                 vec_mu = predictive_posterior.mean
                 vec_cov_diag = np.diag(predictive_posterior.covariance)
-            elif self._posterior_inference_method == "mean_posterior":
+            elif posterior_inference_method == "mean_posterior":
                 vec_mu, vec_cov_diag = self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights).mean
 
             nu_minus_dof = self._nu - n_dim - 1
@@ -272,20 +275,24 @@ class vonMisesFisherConjugatePrior(object):
         return MAP estimator of \kappa when \mu = \mu_{MAP}
         """
         target_value = r_0 / c
+        assert target_value < 1.0, f"r_0 / c must be smaller than one."
         # objective_function: grad_{\kappa} ln \pi(\kappa|\mu=\mu_{MAP}; c, R_0, m_0)
         # this function is monotone increasing to \kappa.
-        def objective_function(kappa):
-            return _hiv(alpha=p*0.5, x=kappa) - target_value
+        def objective_function(kappa, p, target):
+            return _hiv(alpha=p*0.5, x=kappa) - target
 
         k_min = 0.0
-        k_max = 100.0
+        k_max = 10.0
         while True:
-            if objective_function(k_max) < 0:
-                k_max = k_max * 2
+            if objective_function(k_max, p, target_value) < 0:
+                k_max = k_max * 10
             else:
                 break
         value_range = (k_min, k_max)
-        k_map = optimize.bisect(objective_function, *value_range)
+        k_map = optimize.bisect(objective_function, *value_range, xtol=1E-2, rtol=1E-2, args=(p, target_value))
+
+        # DEBUG
+        # print(f"r_0: {r_0:1.1f}, c: {c:1.1f}, r_0/c: {target_value:1.2f}, kappa: {k_map:1.2f}")
 
         return k_map
 
@@ -309,7 +316,9 @@ class vonMisesFisherConjugatePrior(object):
         return vonMisesFisherConjugatePrior(vec_mu=vec_m_n, r_0=r_n, c=c_n, posterior_inference_method=self._posterior_inference_method)
 
     @_l2_normalize
-    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
+    def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, posterior_inference_method: Optional[str] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
+        if posterior_inference_method is None:
+            posterior_inference_method = self._posterior_inference_method
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
         n_obs, n_dim = mat_obs.shape
@@ -319,11 +328,11 @@ class vonMisesFisherConjugatePrior(object):
             # normalize sample weights as the sum equals to 1.0
             sample_weights = np.array(sample_weights) / np.sum(sample_weights)
 
-        if self._posterior_inference_method == "default":
+        if posterior_inference_method == "default":
             # it returns posterior distribution
             return self._posterior_default(mat_obs=mat_obs, sample_weights=sample_weights)
 
-        elif self._posterior_inference_method == "known_dof":
+        elif posterior_inference_method == "known_dof":
             # inhrerit own {c, R_0} values to the posterior unless explicitly specified.
             c_dash = kwargs.get("c", self._c)
             r_0_dash = kwargs.get("r_0", self._r_0)

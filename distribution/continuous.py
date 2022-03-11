@@ -491,7 +491,8 @@ class vonMisesFisher(object):
         self._mu = vec_mu
         self._kappa = scalar_kappa
         self._validate()
-        self._log_normalization_term = self.calc_log_normalization_term(self._n_dim, self._kappa)
+        self._log_normalization_term = None
+        # self._log_normalization_term = self.calc_log_normalization_term(self._n_dim, self._kappa)
 
     def _validate(self):
         assert np.abs(1. - np.linalg.norm(self._mu)) < self.__EPS, "`vec_mu` must be unit vector."
@@ -535,6 +536,8 @@ class vonMisesFisher(object):
 
     @property
     def log_normalization_term(self) -> float:
+        if self._log_normalization_term is None:
+            self._log_normalization_term = self.calc_log_normalization_term(self._n_dim, self._kappa)
         return self._log_normalization_term
 
     @classmethod
