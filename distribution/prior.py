@@ -315,6 +315,29 @@ class vonMisesFisherConjugatePrior(object):
         c_n = self._c + n_obs
         return vonMisesFisherConjugatePrior(vec_mu=vec_m_n, r_0=r_n, c=c_n, posterior_inference_method=self._posterior_inference_method)
 
+    @classmethod
+    @_l2_normalize
+    def fit(cls, posterior_inference_method: str, mat_obs: matrix, sample_weights: Optional[vector] = None):
+        if mat_obs.ndim == 1:
+            mat_obs = mat_obs.reshape((1, -1))
+        n_obs, n_dim = mat_obs.shape
+        if sample_weights is not None:
+            assert n_obs == len(sample_weights), f"sample size mismatch: {n_obs} != {len(sample_weights)}"
+            # normalize sample weights as the sum equals to 1.0
+            sample_weights = np.array(sample_weights) / np.sum(sample_weights)
+
+        if sample_weights is not None:
+            # \bar{x} = N \sum_{i}{w_i x_i}
+            vec_x_bar = np.sum(n_obs * sample_weights.reshape(-1,1) * mat_obs, axis=0)
+        else:
+            vec_x_bar = np.sum(mat_obs, axis=0)
+
+        r_0 = np.linalg.norm(vec_x_bar)
+        c = n_obs
+        m_0 = vec_x_bar / r_0
+
+        return vonMisesFisherConjugatePrior(vec_mu=m_0, r_0=r_0, c=c, posterior_inference_method=posterior_inference_method)
+
     @_l2_normalize
     def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, posterior_inference_method: Optional[str] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
         if posterior_inference_method is None:
