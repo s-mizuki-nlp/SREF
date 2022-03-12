@@ -17,15 +17,22 @@ class BertEncoder():
         port = 5555 if port is None else port
         self.bert_client = BertClient(ip=host, port=port)
 
-    def bert_embed(self, sents, merge_strategy: str, merge_subtokens=True, apply_sum_pooling: bool = False):
+    def bert_embed(self, sents, merge_strategy: str, merge_subtokens=True, apply_sum_pooling: bool = False, add_sentence_mean: bool = False):
+        # sents_encodings_full: (n_sentences, max(n_tokens)+2, n_dim*n_layers)
+        # missing token positions are filled with zero vectors.
         sents_encodings_full = self.bert_client.encode(sents)
         sents_tokenized = [tokenizer.tokenize(s) for s in sents]
 
         sents_encodings = []
-        for sent_tokens, sent_vecs in zip(sents_tokenized, sents_encodings_full):
+        for sent_tokens, sent_token_vecs in zip(sents_tokenized, sents_encodings_full):
+            # sent_token_vecs: (max(n_tokens)+2, n_dim*n_layers)
+            if add_sentence_mean:
+                sent_token_vecs += np.mean(sent_token_vecs, axis=0)
+
             sent_encodings = []
-            sent_vecs = sent_vecs[1:-1]  # ignoring [CLS] and [SEP]
-            for token, vec in zip(sent_tokens, sent_vecs):
+            sent_token_vecs = sent_token_vecs[1:-1]  # ignoring [CLS] and [SEP]. but [SEP] position is not necessarily last one due to padding.
+
+            for token, vec in zip(sent_tokens, sent_token_vecs):
                 layers_vecs = np.split(vec, 4)  # due to -pooling_layer -4 -3 -2 -1
                 layers_repr = np.array(layers_vecs, dtype=np.float32)
                 if apply_sum_pooling:

@@ -263,7 +263,7 @@ if __name__ == '__main__':
                 batch_sents = [sent_info['tokenized_sentence'] for sent_info in batch]
 
                 # process contextual embeddings in sentences batches of size args.batch_size
-                batch_bert = bert_encoder.bert_embed(batch_sents, merge_strategy=args.merge_strategy, apply_sum_pooling=True)
+                batch_bert = bert_encoder.bert_embed(batch_sents, merge_strategy=args.merge_strategy, apply_sum_pooling=True, add_sentence_mean=False)
 
                 for sent_info, sent_bert in zip(batch, batch_bert):
                     idx_map_abs = sent_info['idx_map_abs']
