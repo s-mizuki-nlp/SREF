@@ -46,7 +46,8 @@ def extract_lemma_keys_and_weights_from_semantically_related_synsets(synset_id: 
 
 def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embeddings: Dict[str, np.ndarray],
                            prior_inference_method: str,
-                           posterior_inference_method: Optional[str] = None):
+                           posterior_inference_method: Optional[str] = None,
+                           **kwargs):
     if prior_inference_method == "independent":
         assert posterior_inference_method is not None, f"you must specify `posterior_inference_method` argument."
 
@@ -70,7 +71,7 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     if len(lst_embs) > 0:
         mat_s = np.stack(lst_embs).squeeze()
         if prior_inference_method == "independent":
-            posterior = prior.__class__.fit(mat_obs=mat_s, sample_weights=lst_weights, posterior_inference_method=posterior_inference_method)
+            posterior = prior.__class__.fit(mat_obs=mat_s, sample_weights=lst_weights, posterior_inference_method=posterior_inference_method, **kwargs)
         else:
             posterior = prior.posterior(mat_obs=mat_s, sample_weights=lst_weights)
     else:
@@ -82,7 +83,7 @@ def update_children_priors(parent_node, semantic_relation: str, basic_lemma_embe
     for child_node in parent_node.children:
         child_node.prior = posterior
         update_children_priors(parent_node=child_node, semantic_relation=semantic_relation, basic_lemma_embeddings=basic_lemma_embeddings,
-                               prior_inference_method=prior_inference_method, posterior_inference_method=posterior_inference_method)
+                               prior_inference_method=prior_inference_method, posterior_inference_method=posterior_inference_method, r_0=r_0)
 
 
 def compute_sense_representations_adverb_adjective(synset: wn.synset,
@@ -282,7 +283,8 @@ def _parse_args():
         assert args.prior_inference_method != "independent", f"`prior_inference_method=independent` is not supported yet."
     elif args.prob_distribution == "vonMisesFisher":
         assert args.c > 0, f"`c` must be positive: {args.c}"
-        assert args.r_0 > 0, f"`r_0` must be positive: {args.r_0}"
+        if args.prior_inference_method == "inherit":
+            assert args.r_0 > 0, f"`r_0` must be positive: {args.r_0}"
         # assert args.normalize_lemma_embeddings is True, f"`normalize_lemma_embeddings` must be enabled."
         assert args.posterior_inference_method in vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
 
@@ -316,10 +318,11 @@ def _parse_args():
                 _prior_inference_method = _posterior_inference_method = None
             else:
                 _prior_inference_method, _posterior_inference_method = args.prior_inference_method, args.posterior_inference_method
-            if (args.prior_inference_method == "independent") or (args.posterior_inference_parameter_estimation == "mle"):
+            _c, _r_0 = args.c, args.r_0
+            if args.posterior_inference_parameter_estimation == "mle":
                 _c = _r_0 = float("nan")
-            else:
-                _c, _r_0 = args.c, args.r_0
+            if args.prior_inference_method == "independent":
+                _c, _r_0 = float("nan"), args.r_0
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
@@ -385,7 +388,7 @@ if __name__ == "__main__":
 
     elif args.prob_distribution == "vonMisesFisher":
         c = args.c
-        r_0 = args.r_0
+        r_0 = args.r_0 if args.r_0 > 0 else 1.0
         m_0 = np.zeros(shape=(n_dim,), dtype=np.float) # vague prior
         logging.info(f"c = {c:1.1f}, R_0 = {r_0:1.1f}, m_0 = zeroes({n_dim})")
         root_prior = vonMisesFisherConjugatePrior(vec_mu=m_0, c=c, r_0=r_0, posterior_inference_method=args.posterior_inference_method)
@@ -403,7 +406,8 @@ if __name__ == "__main__":
                                semantic_relation=args.semantic_relation,
                                basic_lemma_embeddings=dict_lemma_key_embeddings,
                                prior_inference_method=args.prior_inference_method,
-                               posterior_inference_method=args.posterior_inference_method)
+                               posterior_inference_method=args.posterior_inference_method,
+                               r_0=args.r_0)
 
     # compute predictive posterior distributions
     logging.info(f"compute sense representation for all lemmas...")
