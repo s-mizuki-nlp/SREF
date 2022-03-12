@@ -183,6 +183,7 @@ def _parse_args():
     parser.add_argument("--sanity_check", action="store_true", help="enable sanity check (e.g., assert candidate lemma keys)")
     parser.add_argument("--disable_bert_encoder", action="store_true", help="disable bert-as-service.")
     parser.add_argument("--disable_bert_layer_pooling", action="store_true", help="disable sum pooling over BERT layers. DEFAULT: False")
+    parser.add_argument("--force_cosine_similarity_for_adj_and_adv", action="store_true", help="force cosine similarity for adjective and adverb. DEFAULT: False")
     args = parser.parse_args()
 
     return args
@@ -292,7 +293,10 @@ if __name__ == '__main__':
                         if curr_postag in ('NOUN', 'VERB'):
                             metric = args.similarity_metric
                         elif curr_postag in ('ADJ', 'ADV'):
-                            metric = "cosine"
+                            if args.force_cosine_similarity_for_adj_and_adv:
+                                metric = "cosine"
+                            else:
+                                metric = args.similarity_metric
                         lst_predicted_senses = model.match_senses(metric=metric,
                                                                   entity_embedding=curr_vector,
                                                                   lemma=curr_lemma, postag=curr_postag,
