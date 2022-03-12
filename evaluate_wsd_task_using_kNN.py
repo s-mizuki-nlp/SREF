@@ -282,7 +282,6 @@ if __name__ == '__main__':
                             n_unk_lemmas += 1
                             continue  # skips hurt performance in official scorer
 
-                        curr_tokens = [sent_info['tokens'][i] for i in tok_idxs]
                         curr_vector = np.array([sent_bert[i][1] for i in tok_idxs]).mean(axis=0)
 
                         """
