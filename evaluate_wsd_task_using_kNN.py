@@ -207,7 +207,7 @@ if __name__ == '__main__':
         else:
             raise ValueError(f"unexpected `bert_host` value: {args.bert_host}")
 
-    logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.try_again}")
+    logging.info(f"similarity_metric:{args.similarity_metric}, try-again mechanism:{args.try_again}, force cosine for ADJ+ADV: {args.force_cosine_similarity_for_adj_and_adv}")
     logging.info(f"Loading sense representation from: {args.sense_representation_path}")
 
     logging.info("initialize sense representation model.")
@@ -351,3 +351,8 @@ if __name__ == '__main__':
         pos_correct += np.array([len(failed_by_pos[i]) for i in pos_position])
     print('F-all %f' % (num_correct/num_all))
     print(pos_position, pos_all.tolist(), pos_correct.tolist(), (pos_correct/pos_all).tolist())
+
+    # easy-to-copy output
+    f_values = (pos_correct/pos_all).tolist() + [num_correct/num_all]
+    str_f_values = ",".join([f"{value:1.6f}" for value in f_values])
+    print(f"Noun, Verb, Adj, Adv, ALL: {str_f_values}")
