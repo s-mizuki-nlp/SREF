@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
-import io, pickle
+import io, pickle, json
 from typing import Optional, Tuple, Dict, Any
 import numpy as np
 
@@ -110,3 +110,10 @@ class WhiteningPreprocessor(object):
         # returned mat_w_h is the eigenvectors. shape will be (n_dim, n_dim_reduced). each column is a i-th greatest eigenvector.
         # returned vec_l_h is the eigenvalues. shape will be (n_dim_reduced). i-th element is the i-th greatest eigenvalue.
         return mat_w_h, vec_l_h
+
+    def __str__(self):
+        param_names = ("pre_norm","post_norm","n_dim_reduced")
+        dict_ret = {}
+        for param_name in param_names:
+            dict_ret[param_name] = self.__getattribute__("_" + param_name)
+        return json.dumps(dict_ret)
