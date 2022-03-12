@@ -627,12 +627,12 @@ class vonMisesFisher(object):
         # num = kappa**d_dash
         log_num = d_dash * np.log(kappa)
         # denom = np.power(2*np.pi, n_dim//2) * iv(d_dash, kappa)
-        log_denom = n_dim/2 * np.log(2*np.pi) + float(mpmath.log(mpmath.besseli(d_dash, kappa)))
+        log_denom = n_dim/2 * np.log(2*np.pi) + mpmath.log(mpmath.besseli(d_dash, kappa, maxterms=int(1E8)))
 
         # norm = 1./ (norm / denom) = 1 / C_p(\kappa)
         log_norm = log_denom - log_num
 
-        return log_norm
+        return float(log_norm)
 
     @classmethod
     def random_generation(cls, n_dim: int, mu_range=None, kappa_range=None):
