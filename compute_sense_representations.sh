@@ -22,8 +22,9 @@ python ./compute_sense_representations.py \
 --normalize_lemma_embeddings \
 --inference_strategy="synset-and-lemma" \
 --semantic_relation="all-relations" \
---prior_inference_method="inherit" \
+--prior_inference_method="independent" \
 --posterior_inference_method="default" \
 --posterior_inference_parameter_estimation="mle" \
+--whitening='{"pre_norm":False, "post_norm":True, "n_dim_reduced":null}' \
 --c=10.0 \
---r_0=9.0
+--r_0=1.0

@@ -2,7 +2,7 @@
 # -*- coding:utf-8 -*-
 
 from typing import Dict, List, Tuple, Union, Optional
-import os, sys, io, copy, pickle
+import os, sys, io, copy, pickle, json
 import argparse
 from nltk.corpus import wordnet as wn
 import numpy as np
@@ -14,6 +14,7 @@ from synset_expand import load_basic_lemma_embeddings, vector_merge, gloss_exten
 from utils.wordnet import extract_synset_taxonomy, synset_to_lemma_keys
 from distribution.continuous import MultiVariateNormal, vonMisesFisher
 from distribution.prior import NormalInverseWishart, vonMisesFisherConjugatePrior
+from distribution.preprocessor import WhiteningPreprocessor
 
 
 wd = os.path.dirname(__file__)
@@ -270,6 +271,7 @@ def _parse_args():
     parser.add_argument('--c', type=float, required=False, help="c for vMFConjugatePrior distribution. 0 < c. Smaller is less confident for concentration (\kappa).")
     parser.add_argument('--r_0', type=float, required=False, help="R_0 for vMFConjugatePrior distribution. 0 < R_0. Smaller is less confident for direction (\mu).")
     parser.add_argument('--cov', type=float, required=False, default=-1, help="\Phi = \cov * (\nu_{-DoF})")
+    parser.add_argument('--whitening', type=str, required=False, default="", help='pre-processing option. e.g. {"pre_norm":False, "post_norm":True, "n_dim_reduced":128}')
     args = parser.parse_args()
 
     # assertion
@@ -288,16 +290,26 @@ def _parse_args():
         # assert args.normalize_lemma_embeddings is True, f"`normalize_lemma_embeddings` must be enabled."
         assert args.posterior_inference_method in vonMisesFisherConjugatePrior.AVAILABLE_POSTERIOR_INFERENCE_METHOD(), f"invalid posterior_inference_method: {args.posterior_inference_method}"
 
+    if len(args.whitening) > 0:
+        try:
+            args.whitening = json.loads(args.whitening.lower())
+        except Exception as e:
+            print(e)
+            raise ValueError(f"`whitening` json parsing error: {args.whitening}")
+    else:
+        args.whitening = None
+
     # output
     path_output = args.out_path
     if path_output is None:
         if args.prob_distribution == "MultiVariateNormal":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_whitening_dim-{whitening_n_dim}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_k-{kappa:1.4f}_nu-{nu_minus_dof:1.4f}_{lemma_embeddings_name}.pkl"
         elif args.prob_distribution == "vonMisesFisher":
-            path_output = "data/representations/{prob_distribution}/norm-{normalize}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
+            path_output = "data/representations/{prob_distribution}/norm-{normalize}_whitening_dim-{whitening_n_dim}_str-{strategy}_semrel-{relation}_prior-{prior_inference_method}_posterior-{posterior_inference_method}_estimator-{posterior_inference_parameter_estimation}_c-{c:1.1f}_r0-{r_0:1.1f}_{lemma_embeddings_name}.pkl"
 
     if path_output.find("{") != -1:
         lemma_embeddings_name = os.path.splitext(os.path.basename(args.input_path))[0].replace("emb_glosses_", "")
+        _whitening_n_dim = "False" if args.whitening is None else args.whitening.get("n_dim_reduced", None)
         if args.prob_distribution == "MultiVariateNormal":
             if (args.posterior_inference_method == "known_variance") or (args.prior_inference_method == "independent"):
                 _kappa = _nu_minus_dof = float("nan")
@@ -312,17 +324,19 @@ def _parse_args():
                                              kappa=_kappa,
                                              nu_minus_dof=_nu_minus_dof,
                                              lemma_embeddings_name=lemma_embeddings_name,
-                                             prob_distribution=args.prob_distribution)
+                                             prob_distribution=args.prob_distribution,
+                                             whitening_n_dim=_whitening_n_dim)
         elif args.prob_distribution == "vonMisesFisher":
             if args.posterior_inference_parameter_estimation == "mle":
                 _prior_inference_method = _posterior_inference_method = None
             else:
                 _prior_inference_method, _posterior_inference_method = args.prior_inference_method, args.posterior_inference_method
             _c, _r_0 = args.c, args.r_0
-            if args.posterior_inference_parameter_estimation == "mle":
-                _c = _r_0 = float("nan")
             if args.prior_inference_method == "independent":
                 _c, _r_0 = float("nan"), args.r_0
+            if args.posterior_inference_parameter_estimation == "mle":
+                _c = _r_0 = float("nan")
+
             path_output = path_output.format(normalize=args.normalize_lemma_embeddings,
                                              strategy=args.inference_strategy,
                                              relation=args.semantic_relation,
@@ -332,7 +346,8 @@ def _parse_args():
                                              c=_c,
                                              r_0=_r_0,
                                              lemma_embeddings_name=lemma_embeddings_name,
-                                             prob_distribution=args.prob_distribution)
+                                             prob_distribution=args.prob_distribution,
+                                             whitening_n_dim=_whitening_n_dim)
     assert not os.path.exists(path_output), f"file already exists: {path_output}"
     logging.info(f"result will be saved as: {path_output}")
     args.out_path = path_output
@@ -351,10 +366,32 @@ if __name__ == "__main__":
     logging.info(f"Loading basic lemma embeddings: {args.input_path}")
     dict_lemma_key_embeddings = load_basic_lemma_embeddings(path=args.input_path, l2_norm=args.normalize_lemma_embeddings,
                                                             return_first_embeddings_only=True)
-    dict_lemma_key_embeddings_for_sref = load_basic_lemma_embeddings(path=args.input_path, l2_norm=True,
-                                                            return_first_embeddings_only=True)
+    # dict_lemma_key_embeddings_for_sref = load_basic_lemma_embeddings(path=args.input_path, l2_norm=True,
+    #                                                         return_first_embeddings_only=True)
     n_dim = len(next(iter(dict_lemma_key_embeddings.values())))
     logging.info(f"done. embeddings dimension size: {n_dim}")
+
+    if args.whitening is not None:
+        cfg_whitening = args.whitening
+        if "n_dim_reduced" not in cfg_whitening:
+            cfg_whitening["n_dim_reduced"] = None
+        if "pre_norm" not in cfg_whitening:
+            cfg_whitening["pre_norm"] = False
+        if "post_norm" not in cfg_whitening:
+            if args.prob_distribution == "MultiVariateNormal":
+                cfg_whitening["post_norm"] = False
+            elif args.prob_distribution == "vonMisesFisher":
+                cfg_whitening["post_norm"] = True
+        logging.info(f"fitting whitening preprocessor: {json.dumps(cfg_whitening)}")
+        preprocessor = WhiteningPreprocessor(**cfg_whitening)
+        mat_obs = np.stack(dict_lemma_key_embeddings.values())
+        preprocessor.fit(mat_obs)
+        del mat_obs
+        logging.info(f'apply whitening to basic lemma embeddings. dimension size: {n_dim} -> {cfg_whitening["n_dim_reduced"]}')
+        for key, value in tqdm(dict_lemma_key_embeddings.items()):
+            dict_lemma_key_embeddings[key] = preprocessor.transform(value)
+    else:
+        preprocessor = None
 
     # synset taxonomy for noun and verb
     logging.info(f"extracting synset taxonomy from WordNet...")
@@ -437,6 +474,9 @@ if __name__ == "__main__":
 
     # save as binary file (serialize)
     object = {"lemma":dict_lemma_sense_representations, "synset":dict_synset_sense_representations, "meta":vars(args)}
+    if preprocessor is not None:
+        object["preprocessor"] = preprocessor.serialize()
+
     path = args.out_path
     logging.info(f"sense repr. will be saved as: {path}")
     with io.open(path, mode="wb") as ofs:

@@ -11,6 +11,7 @@ from nltk.corpus import wordnet as wn
 from utils.wordnet import extract_synset_taxonomy, lemma_key_to_synset_id, lemma_key_to_pos, lemma_key_to_lemma_name
 from distribution.continuous import MultiVariateNormal, vonMisesFisher
 from distribution import distance_mvn
+from distribution.preprocessor import WhiteningPreprocessor
 
 prob_dist_types = Union[MultiVariateNormal, vonMisesFisher]
 
@@ -30,6 +31,10 @@ class SenseRepresentationModel(object):
             self._dict_lemma_sense_representations = object["lemma"]
             self._dict_synset_sense_representations = object["synset"]
             self._metadata = object.get("meta", {})
+        if "preprocessor" in object:
+            self._preprocessor = WhiteningPreprocessor.deserialize(object["preprocessor"])
+        else:
+            self._preprocessor = None
 
         self._similarity_metric = default_similarity_metric
 
@@ -49,6 +54,10 @@ class SenseRepresentationModel(object):
         dict_ret = self._metadata
         dict_ret["repr_type"] = self._repr_type
         dict_ret["default_similarity_metric"] = self._similarity_metric
+        if self._preprocessor is not None:
+            dict_ret["preprocessor"] = str(self._preprocessor)
+        else:
+            dict_ret["preprocessor"] = None
         return dict_ret
 
     @property
@@ -91,6 +100,9 @@ class SenseRepresentationModel(object):
 
         if entity_embedding.ndim == 1:
             entity_embedding = entity_embedding.reshape(1, -1)
+
+        if self._preprocessor is not None:
+            entity_embedding = self._preprocessor.transform(entity_embedding)
 
         lst_similarities = [self.calc_similarity(query_embeddings=entity_embedding, lemma_key=lemma_key, metric=metric) for lemma_key in lst_candidate_lemma_keys]
         matches = list(zip(lst_candidate_lemma_keys, lst_similarities))
