@@ -426,8 +426,12 @@ if __name__ == "__main__":
     elif args.prob_distribution == "vonMisesFisher":
         c = args.c
         r_0 = args.r_0 if args.r_0 > 0 else 1.0
-        m_0 = np.zeros(shape=(n_dim,), dtype=np.float) # vague prior
-        logging.info(f"c = {c:1.1f}, R_0 = {r_0:1.1f}, m_0 = zeroes({n_dim})")
+        if preprocessor is not None:
+            _n_dim = preprocessor.n_dim_reduced
+        else:
+            _n_dim = n_dim
+        m_0 = np.zeros(shape=(_n_dim,), dtype=np.float) # vague prior
+        logging.info(f"c = {c:1.1f}, R_0 = {r_0:1.1f}, m_0 = zeroes({_n_dim})")
         root_prior = vonMisesFisherConjugatePrior(vec_mu=m_0, c=c, r_0=r_0, posterior_inference_method=args.posterior_inference_method)
 
     # compute synset prior distributions

@@ -117,3 +117,7 @@ class WhiteningPreprocessor(object):
         for param_name in param_names:
             dict_ret[param_name] = self.__getattribute__("_" + param_name)
         return json.dumps(dict_ret)
+
+    @property
+    def n_dim_reduced(self):
+        return self._n_dim_reduced
