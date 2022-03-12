@@ -314,6 +314,8 @@ def _parse_args():
         elif args.prob_distribution == "vonMisesFisher":
             if args.posterior_inference_parameter_estimation == "mle":
                 _prior_inference_method = _posterior_inference_method = None
+            else:
+                _prior_inference_method, _posterior_inference_method = args.prior_inference_method, args.posterior_inference_method
             if (args.prior_inference_method == "independent") or (args.posterior_inference_parameter_estimation == "mle"):
                 _c = _r_0 = float("nan")
             else:
