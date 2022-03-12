@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding:utf-8 -*-
 
+import io, pickle
 from typing import Optional, Tuple, Dict, Any
 import numpy as np
 
@@ -43,6 +44,13 @@ class WhiteningPreprocessor(object):
     def deserialize(cls, object: Dict[str, Any]):
         return cls(**object)
 
+    @classmethod
+    def load(cls, file_path: str) -> "WhiteningPreprocessor":
+        with io.open(file_path, mode="rb") as ifs:
+            obj = pickle.load(ifs)
+            model = cls.deserialize(obj)
+        return model
+
     def fit(self, mat_obs: matrix):
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
@@ -75,7 +83,7 @@ class WhiteningPreprocessor(object):
     def transform(self, mat_obs: matrix) -> np.ndarray:
         if not hasattr(self, "_factor_loading_matrix"):
             d_sqrt_inv = 1. / np.sqrt(self._vec_lambda).reshape(1, -1)
-            self._factor_loading_matrix = self._mat_u / d_sqrt_inv
+            self._factor_loading_matrix = self._mat_u * d_sqrt_inv
 
         if self._pre_norm:
             mat_obs = l2_normalize(mat_obs)
@@ -90,7 +98,7 @@ class WhiteningPreprocessor(object):
 
     def _calc_principal_component_vectors_and_eigenvalues(self, mat_cov: matrix, n_dim_reduced: int) -> Tuple[matrix, vector]:
         n_dim = mat_cov.shape[0]
-        assert n_dim_reduced < n_dim, "reduced dimension size `n_dim_reduced` must be smaller than original dimension size."
+        assert n_dim_reduced <= n_dim, "reduced dimension size `n_dim_reduced` must be smaller than original dimension size."
 
         # eigen decomposition
         vec_l, mat_w = np.linalg.eig(mat_cov)
