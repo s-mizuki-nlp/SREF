@@ -329,7 +329,7 @@ class vonMisesFisherConjugatePrior(object):
 
     @classmethod
     @_l2_normalize
-    def fit(cls, posterior_inference_method: str, mat_obs: matrix, sample_weights: Optional[vector] = None):
+    def fit(cls, posterior_inference_method: str, mat_obs: matrix, sample_weights: Optional[vector] = None, r_0: float = 1.0):
         if mat_obs.ndim == 1:
             mat_obs = mat_obs.reshape((1, -1))
         n_obs, n_dim = mat_obs.shape
@@ -344,12 +344,15 @@ class vonMisesFisherConjugatePrior(object):
         else:
             vec_x_bar = np.sum(mat_obs, axis=0)
 
-        r_0 = 1.0
+        if r_0 > 0:
+            _r_0 = r_0
+        else:
+            _r_0 = np.linalg.norm(vec_x_bar)
         c = n_obs
         m_0 = vec_x_bar / np.linalg.norm(vec_x_bar)
         # print(f"r_0: {r_0:1.1f}, c: {c:1.1f}, r_0/c: {r_0/c:1.2f}")
 
-        return vonMisesFisherConjugatePrior(vec_mu=m_0, r_0=r_0, c=c, posterior_inference_method=posterior_inference_method)
+        return vonMisesFisherConjugatePrior(vec_mu=m_0, r_0=_r_0, c=c, posterior_inference_method=posterior_inference_method)
 
     @_l2_normalize
     def posterior(self, mat_obs: matrix, sample_weights: Optional[vector] = None, posterior_inference_method: Optional[str] = None, **kwargs) -> "vonMisesFisherConjugatePrior":
