@@ -54,15 +54,15 @@ class SenseRepresentationModel(object):
         dict_ret = self._metadata
         dict_ret["repr_type"] = self._repr_type
         dict_ret["default_similarity_metric"] = self._similarity_metric
-        if self._preprocessor is not None:
-            dict_ret["preprocessor"] = str(self._preprocessor)
-        else:
-            dict_ret["preprocessor"] = None
         return dict_ret
 
     @property
     def lemma_keys(self):
         return self._dict_lemma_sense_representations.keys()
+
+    @property
+    def preprocessor(self):
+        return self._preprocessor
 
     def load_aux_senses(self):
         self.lemma_key_to_lemma = {lemma_key: lemma_key_to_lemma_name(lemma_key) for lemma_key in self.lemma_keys}
