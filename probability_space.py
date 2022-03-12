@@ -152,12 +152,18 @@ class SenseRepresentationModel(object):
         return similarity
 
     def calc_cosine_similarity(self, vector: np.ndarray, prob_dist: prob_dist_types) -> float:
-        vec_mu = prob_dist.mean
+        if isinstance(prob_dist, MultiVariateNormal):
+            vec_mu = prob_dist.mean
+        elif isinstance(prob_dist, vonMisesFisher):
+            vec_mu = prob_dist.mu
         sim = np.dot(vector, vec_mu) / ( np.linalg.norm(vector) * np.linalg.norm(vec_mu) + 1E-15 )
         return sim
 
     def calc_l2_similarity(self, vector: np.ndarray, prob_dist: prob_dist_types) -> float:
-        vec_mu = prob_dist.mean
+        if isinstance(prob_dist, MultiVariateNormal):
+            vec_mu = prob_dist.mean
+        elif isinstance(prob_dist, vonMisesFisher):
+            vec_mu = prob_dist.mu
         sim = - np.linalg.norm(vec_mu - vector)
         return sim
 
