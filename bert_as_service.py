@@ -26,8 +26,7 @@ class BertEncoder():
         sents_encodings = []
         for sent_tokens, sent_token_vecs in zip(sents_tokenized, sents_encodings_full):
             # sent_token_vecs: (max(n_tokens)+2, n_dim*n_layers)
-            if add_sentence_mean:
-                sent_token_vecs += np.mean(sent_token_vecs, axis=0)
+            sent_token_vecs_mean = np.array(np.split(np.mean(sent_token_vecs, axis=0), 4))
 
             sent_encodings = []
             sent_token_vecs = sent_token_vecs[1:-1]  # ignoring [CLS] and [SEP]. but [SEP] position is not necessarily last one due to padding.
@@ -35,6 +34,10 @@ class BertEncoder():
             for token, vec in zip(sent_tokens, sent_token_vecs):
                 layers_vecs = np.split(vec, 4)  # due to -pooling_layer -4 -3 -2 -1
                 layers_repr = np.array(layers_vecs, dtype=np.float32)
+
+                if add_sentence_mean:
+                    layers_repr = layers_repr + sent_token_vecs_mean
+
                 if apply_sum_pooling:
                     layers_repr = layers_repr.sum(axis=0)
                 sent_encodings.append((token, layers_repr))
