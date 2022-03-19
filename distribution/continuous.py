@@ -673,8 +673,10 @@ class vonMisesFisher(object):
 
         # variance: \kappa
         r_bar = round(r_bar, 4)
-        if (n_obs == 1) or (r_bar >= 1.0):
-            kappa = 10000.0
+        if n_obs == 1:
+            kappa = n_dim
+        elif r_bar >= 1.0:
+            kappa = n_dim*10
         else:
             # round r_bar in order to activate cache.
             if approx_algorithm == "simple":
