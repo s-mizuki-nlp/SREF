@@ -19,12 +19,12 @@ python ./compute_sense_representations.py \
 python ./compute_sense_representations.py \
 --input_path=./data/vectors/emb_glosses_aug_gloss+examples.txt \
 --prob_distribution="vonMisesFisher" \
---normalize_lemma_embeddings \
 --inference_strategy="synset-and-lemma" \
 --semantic_relation="all-relations" \
 --prior_inference_method="independent" \
 --posterior_inference_method="default" \
---posterior_inference_parameter_estimation="mle" \
---whitening='{"pre_norm":False, "post_norm":True, "n_dim_reduced":null}' \
+--posterior_inference_parameter_estimation="map" \
+--whitening='{"pre_norm":False, "post_norm":True, "n_dim_reduced":128}' \
 --c=10.0 \
 --r_0=1.0
+# --normalize_lemma_embeddings \
