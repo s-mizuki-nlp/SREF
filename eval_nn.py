@@ -1,6 +1,8 @@
+from typing import List, Tuple
 import sys, io, os
 import logging
 import argparse
+from pprint import pprint
 from functools import lru_cache
 from collections import defaultdict
 from collections import Counter
@@ -103,6 +105,90 @@ def wn_all_lexnames_groups():
     return dict(groups)
 
 
+def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List[Tuple[str, float]],
+                        surface_form: str, pos_tag: str,
+                        context_vector: np.array,
+                        top_k_candidates:int = 2,
+                        exclude_common_semantically_related_synsets: bool = True,
+                        lookup_first_lemma_sense_only: bool = True,
+                        exclude_oneselves_for_noun_and_verb: bool = True,
+                        strategy:str = 'all-relations') -> List[str]:
+
+    if len(lst_tup_sense_key_and_similarity) == 1:
+        return [sense_key for sense_key, similarity in lst_tup_sense_key_and_similarity if similarity > args.thresh]
+
+    else:
+        lexname_groups = wn_all_lexnames_groups()
+        dict_try_again_synsets = {}
+
+        # {lemma,pos} -> [candidate synsets]
+        pos2type = {'ADJ': 'as', 'ADV': 'r', 'NOUN': 'n', 'VERB': 'v'}
+
+        # candidate synsets = {synset of lemma sense key: similarity}
+        dict_candidate_synsets = {}
+        map_sense_key_to_synset = {}
+        for sense_key, similarity in lst_tup_sense_key_and_similarity[:top_k_candidates]:
+            try:
+                synset = wn.lemma_from_key(sense_key).synset()
+            except:
+                lst_lemma_to_synset_ids = retrieve_sense(surface_form, pos2type[pos_tag])
+                for synset_id in lst_lemma_to_synset_ids:
+                    lst_lemma_keys = [lemma.key() for lemma in wn.synset(synset_id).lemmas()]
+                    if sense_key in lst_lemma_keys:
+                        synset = wn.synset(synset_id)
+                        break
+            dict_candidate_synsets[synset] = similarity
+            map_sense_key_to_synset[sense_key] = synset
+
+        # collect semantically related synsets
+        for candidate_synset in dict_candidate_synsets.keys():
+            dict_try_again_synsets[candidate_synset] = set(gloss_extend(candidate_synset.name(), strategy))
+
+        # remove common synsets from semantically related synsets
+        if exclude_common_semantically_related_synsets:
+            set_common_extended_synsets = None
+            for candidate_synset in dict_candidate_synsets.keys():
+                if set_common_extended_synsets is None:
+                    set_common_extended_synsets = dict_try_again_synsets[candidate_synset]
+                else:
+                    set_common_extended_synsets &= dict_try_again_synsets[candidate_synset]
+            for candidate_synset in dict_candidate_synsets.keys():
+                dict_try_again_synsets[candidate_synset] -= set_common_extended_synsets
+
+        is_different_lexname = len(set([synset.lexname() for synset in dict_candidate_synsets.keys()])) > 1
+        for candidate_synset in dict_candidate_synsets.keys():
+            # if supersense is different, then extend semantically related synsets with lexnames
+            if is_different_lexname:
+                dict_try_again_synsets[candidate_synset] |= set(lexname_groups[candidate_synset.lexname()])
+
+            # compute try-again similarity using semantically related synsets
+            lst_try_again_similarities = []
+            for try_again_synset in dict_try_again_synsets[candidate_synset]:
+                # exclude oneselves for NOUN and VERB
+                if exclude_oneselves_for_noun_and_verb:
+                    if try_again_synset in dict_candidate_synsets.keys() and (pos_tag not in ['ADJ','ADV']):
+                        continue
+
+                lst_lemmas = try_again_synset.lemmas()
+                if lookup_first_lemma_sense_only:
+                    lst_lemmas = lst_lemmas[:1]
+                for lemma in lst_lemmas:
+                    gloss_vector = model.get_vec(lemma.key())
+                    sim = np.dot(context_vector, gloss_vector)
+                    lst_try_again_similarities.append(sim)
+
+            try_again_similarity = max(lst_try_again_similarities) if len(lst_try_again_similarities) > 0 else 0.0
+            dict_candidate_synsets[candidate_synset] += try_again_similarity
+
+        dict_lemma_similarities = {sense_key: dict_candidate_synsets[synset] for sense_key, synset in map_sense_key_to_synset.items()}
+        # DEBUG
+        pprint(dict_lemma_similarities)
+
+        lst_top_sense_key = [sorted(dict_lemma_similarities.items(), key=lambda x: x[1], reverse=True)[0][0]]
+
+    return lst_top_sense_key
+
+
 def sec_wsd(matches):
     lexname_groups = wn_all_lexnames_groups()
     preds = [sk for sk, sim in matches if sim > args.thresh][:]
@@ -151,6 +237,9 @@ def sec_wsd(matches):
         key_score = {keys[j]: preds_sim[j] + np.sum(
             sorted([syn[0] for syn in name['sim_%s' % i.name()].values()], reverse=True)[:1]) for i, j in
                      synsets.items()}
+
+        # DEBUG
+        pprint(key_score)
 
         final_key = [sorted(key_score.items(), key=lambda x: x[1], reverse=True)[0][0]]
 
@@ -264,7 +353,7 @@ if __name__ == '__main__':
                 batch_sents = [sent_info['tokenized_sentence'] for sent_info in batch]
 
                 # process contextual embeddings in sentences batches of size args.batch_size
-                batch_bert = bert_encoder.bert_embed(batch_sents, merge_strategy=args.merge_strategy)
+                batch_bert = bert_encoder.bert_embed(batch_sents, merge_strategy=args.merge_strategy, apply_sum_pooling=True)
 
                 for sent_info, sent_bert in zip(batch, batch_bert):
                     idx_map_abs = sent_info['idx_map_abs']
@@ -325,7 +414,15 @@ if __name__ == '__main__':
                         # if specified in CLI parameters
                         preds = [sk for sk, sim in matches if sim > args.thresh][:args.k]
                         if args.sec_wsd:
-                            preds = sec_wsd(matches)[:1]
+                            preds = try_again_mechanism(lst_tup_sense_key_and_similarity=matches, top_k_candidates=2,
+                                                        surface_form = curr_lemma, pos_tag = curr_postag,
+                                                        model=senses_vsm,
+                                                        context_vector=curr_vector,
+                                                        strategy="all-relations",
+                                                        exclude_common_semantically_related_synsets=True,
+                                                        lookup_first_lemma_sense_only=True,
+                                                        exclude_oneselves_for_noun_and_verb=True)
+                            # preds = sec_wsd(matches)
                         if len(preds) > 0:
                             results_f.write('%s %s\n' % (curr_sense, preds[0]))
 
