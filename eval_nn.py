@@ -112,12 +112,14 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
                         exclude_common_semantically_related_synsets: bool = True,
                         lookup_first_lemma_sense_only: bool = True,
                         exclude_oneselves_for_noun_and_verb: bool = True,
+                        do_not_fix_synset_degeneration_bug: bool = True,
                         strategy:str = 'all-relations') -> List[str]:
 
     if len(lst_tup_sense_key_and_similarity) == 1:
         return [sense_key for sense_key, similarity in lst_tup_sense_key_and_similarity if similarity > args.thresh]
 
     else:
+        lst_tup_sense_key_and_similarity_top_k = lst_tup_sense_key_and_similarity[:top_k_candidates]
         lexname_groups = wn_all_lexnames_groups()
         dict_try_again_synsets = {}
 
@@ -125,9 +127,9 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
         pos2type = {'ADJ': 'as', 'ADV': 'r', 'NOUN': 'n', 'VERB': 'v'}
 
         # candidate synsets = {synset of lemma sense key: similarity}
-        dict_candidate_synsets = {}
+        dict_try_again_similarities = {}
         map_sense_key_to_synset = {}
-        for sense_key, similarity in lst_tup_sense_key_and_similarity[:top_k_candidates]:
+        for sense_key, similarity in lst_tup_sense_key_and_similarity_top_k:
             try:
                 synset = wn.lemma_from_key(sense_key).synset()
             except:
@@ -137,27 +139,28 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
                     if sense_key in lst_lemma_keys:
                         synset = wn.synset(synset_id)
                         break
-            dict_candidate_synsets[synset] = similarity
+            dict_try_again_similarities[synset] = similarity
             map_sense_key_to_synset[sense_key] = synset
 
-        if len(dict_candidate_synsets) == 1:
-            print(f"there is only single candidate synset. we will disable `exclude_common_semantically_related_synsets`")
-            print(lst_tup_sense_key_and_similarity)
-            print(synset)
+        if len(dict_try_again_similarities) == 1:
+            if do_not_fix_synset_degeneration_bug:
+                print(f"there is only single candidate synset. we will return least similar sense key following original SREF implementation.")
+                # it always return last (=originally least similar) sense key due to the implementation bug.
+                return [lst_tup_sense_key_and_similarity_top_k[-1][0]]
 
         # collect semantically related synsets
-        for candidate_synset in dict_candidate_synsets.keys():
+        for candidate_synset in dict_try_again_similarities.keys():
             dict_try_again_synsets[candidate_synset] = set(gloss_extend(candidate_synset.name(), strategy))
 
         # remove common synsets from semantically related synsets
-        if exclude_common_semantically_related_synsets and (len(dict_candidate_synsets) > 1):
+        if exclude_common_semantically_related_synsets and (len(dict_try_again_similarities) > 1):
             lst_set_synsets = list(dict_try_again_synsets.values())
             set_common_extended_synsets = set().union(*lst_set_synsets).intersection(*lst_set_synsets)
-            for candidate_synset in dict_candidate_synsets.keys():
+            for candidate_synset in dict_try_again_similarities.keys():
                 dict_try_again_synsets[candidate_synset] -= set_common_extended_synsets
 
-        is_different_lexname = len(set([synset.lexname() for synset in dict_candidate_synsets.keys()])) > 1
-        for candidate_synset in dict_candidate_synsets.keys():
+        is_different_lexname = len(set([synset.lexname() for synset in dict_try_again_similarities.keys()])) > 1
+        for candidate_synset in dict_try_again_similarities.keys():
             # if supersense is different, then extend semantically related synsets with lexnames
             if is_different_lexname:
                 dict_try_again_synsets[candidate_synset] |= set(lexname_groups[candidate_synset.lexname()])
@@ -167,7 +170,7 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
             for try_again_synset in dict_try_again_synsets[candidate_synset]:
                 # exclude oneselves for NOUN and VERB
                 if exclude_oneselves_for_noun_and_verb:
-                    if try_again_synset in dict_candidate_synsets.keys() and (pos_tag not in ['ADJ','ADV']):
+                    if try_again_synset in dict_try_again_similarities.keys() and (pos_tag not in ['ADJ','ADV']):
                         continue
 
                 lst_lemmas = try_again_synset.lemmas()
@@ -179,14 +182,15 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
                     lst_try_again_similarities.append(sim)
 
             try_again_similarity = max(lst_try_again_similarities) if len(lst_try_again_similarities) > 0 else 0.0
-            dict_candidate_synsets[candidate_synset] += try_again_similarity
+            dict_try_again_similarities[candidate_synset] = try_again_similarity
 
-        dict_lemma_similarities = {sense_key: dict_candidate_synsets[synset] for sense_key, synset in map_sense_key_to_synset.items()}
-        # DEBUG
-        if wn.synset("earth.n.01") in dict_candidate_synsets:
-            pprint(dict_lemma_similarities)
+        # summand original similarity with try-again similarity.
+        dict_sense_key_similarities = {}
+        for sense_key, original_similarity in lst_tup_sense_key_and_similarity_top_k:
+            synset = map_sense_key_to_synset[sense_key]
+            dict_sense_key_similarities[sense_key] = original_similarity + dict_try_again_similarities[synset]
 
-        lst_top_sense_key = [sorted(dict_lemma_similarities.items(), key=lambda x: x[1], reverse=True)[0][0]]
+        lst_top_sense_key = [sorted(dict_sense_key_similarities.items(), key=lambda x: x[1], reverse=True)[0][0]]
 
     return lst_top_sense_key
 
@@ -239,10 +243,6 @@ def sec_wsd(matches):
         key_score = {keys[j]: preds_sim[j] + np.sum(
             sorted([syn[0] for syn in name['sim_%s' % i.name()].values()], reverse=True)[:1]) for i, j in
                      synsets.items()}
-
-        # DEBUG
-        if wn.synset("earth.n.01") in synsets:
-            pprint(key_score)
 
         final_key = [sorted(key_score.items(), key=lambda x: x[1], reverse=True)[0][0]]
 
@@ -417,15 +417,16 @@ if __name__ == '__main__':
                         # if specified in CLI parameters
                         preds = [sk for sk, sim in matches if sim > args.thresh][:args.k]
                         if args.sec_wsd:
-                            # preds = try_again_mechanism(lst_tup_sense_key_and_similarity=matches, top_k_candidates=2,
-                            #                             surface_form = curr_lemma, pos_tag = curr_postag,
-                            #                             model=senses_vsm,
-                            #                             context_vector=curr_vector,
-                            #                             strategy="all-relations",
-                            #                             exclude_common_semantically_related_synsets=True,
-                            #                             lookup_first_lemma_sense_only=True,
-                            #                             exclude_oneselves_for_noun_and_verb=True)
-                            preds = sec_wsd(matches)
+                            preds = try_again_mechanism(lst_tup_sense_key_and_similarity=matches, top_k_candidates=2,
+                                                        surface_form = curr_lemma, pos_tag = curr_postag,
+                                                        model=senses_vsm,
+                                                        context_vector=curr_vector,
+                                                        strategy="all-relations",
+                                                        exclude_common_semantically_related_synsets=True,
+                                                        lookup_first_lemma_sense_only=True,
+                                                        exclude_oneselves_for_noun_and_verb=True,
+                                                        do_not_fix_synset_degeneration_bug=False)
+                            # preds = sec_wsd(matches)
                         if len(preds) > 0:
                             results_f.write('%s %s\n' % (curr_sense, preds[0]))
 
