@@ -111,6 +111,7 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
                         top_k_candidates:int = 2,
                         exclude_common_semantically_related_synsets: bool = True,
                         lookup_first_lemma_sense_only: bool = True,
+                        average_similarity_in_synset: bool = False,
                         exclude_oneselves_for_noun_and_verb: bool = True,
                         do_not_fix_synset_degeneration_bug: bool = True,
                         strategy:str = 'all-relations') -> List[str]:
@@ -170,16 +171,20 @@ def try_again_mechanism(model: SensesVSM, lst_tup_sense_key_and_similarity: List
             for try_again_synset in dict_try_again_synsets[candidate_synset]:
                 # exclude oneselves for NOUN and VERB
                 if exclude_oneselves_for_noun_and_verb:
-                    if try_again_synset in dict_try_again_similarities.keys() and (pos_tag not in ['ADJ','ADV']):
+                    if try_again_synset in dict_try_again_similarities.keys() and (pos_tag in ['NOUN','VERB']):
                         continue
 
                 lst_lemmas = try_again_synset.lemmas()
                 if lookup_first_lemma_sense_only:
                     lst_lemmas = lst_lemmas[:1]
-                for lemma in lst_lemmas:
-                    gloss_vector = model.get_vec(lemma.key())
-                    sim = np.dot(context_vector, gloss_vector)
-                    lst_try_again_similarities.append(sim)
+                if average_similarity_in_synset:
+                    lst_sim = [np.dot(context_vector, model.get_vec(lemma.key())) for lemma in lst_lemmas]
+                    lst_try_again_similarities.append(np.mean(lst_sim))
+                else:
+                    for lemma in lst_lemmas:
+                        gloss_vector = model.get_vec(lemma.key())
+                        sim = np.dot(context_vector, gloss_vector)
+                        lst_try_again_similarities.append(sim)
 
             try_again_similarity = max(lst_try_again_similarities) if len(lst_try_again_similarities) > 0 else 0.0
             dict_try_again_similarities[candidate_synset] = try_again_similarity
@@ -424,8 +429,9 @@ if __name__ == '__main__':
                                                         strategy="all-relations",
                                                         exclude_common_semantically_related_synsets=True,
                                                         lookup_first_lemma_sense_only=True,
+                                                        average_similarity_in_synset=False,
                                                         exclude_oneselves_for_noun_and_verb=True,
-                                                        do_not_fix_synset_degeneration_bug=False)
+                                                        do_not_fix_synset_degeneration_bug=True)
                             # preds = sec_wsd(matches)
                         if len(preds) > 0:
                             results_f.write('%s %s\n' % (curr_sense, preds[0]))
